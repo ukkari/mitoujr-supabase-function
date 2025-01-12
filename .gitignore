@@ -1,0 +1,16 @@
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+
+# Build artifacts
+dist/
+build/
+
+# Temporary files
+supabase/.temp/
+
+# IDE/Editor configurations
+.vscode/
+.idea/
