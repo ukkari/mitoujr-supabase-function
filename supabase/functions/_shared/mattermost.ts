@@ -3,7 +3,7 @@
 // 例: Bot Token (パーソナルアクセストークンやBotアクセストークン)
 // またはIncoming WebhookのURLを使う場合は下記のように環境変数として設定
 const MATTERMOST_TOKEN = Deno.env.get('MATTERMOST_BOT_TOKEN') ?? ''
-const MATTERMOST_HOST = 'https://mattermost.jr.mitou.org'
+const MATTERMOST_HOST = Deno.env.get("MATTERMOST_URL") ?? ""
 
 // メンターグループ: r3a1ho64b7ghfdogr3xyrw9gya
 
