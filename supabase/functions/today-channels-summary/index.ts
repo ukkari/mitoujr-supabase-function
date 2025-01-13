@@ -34,86 +34,76 @@ serve(async (req) => {
       return new Response(null, { status: 204 });
     }
 
-    // （1）チャンネル一覧を取得
+    // 1. Figure out “today’s” start (for end of yesterday)
+    const nowUTC = new Date();
+    const jstOffset = 9 * 60 * 60 * 1000;
+    const nowJST = new Date(nowUTC.getTime() + jstOffset);
+    const startOfTodayJST = new Date(
+      nowJST.getFullYear(),
+      nowJST.getMonth(),
+      nowJST.getDate(),
+      0, 0, 0, 0
+    );
+    const endOfYesterdayUTC_inMillis = startOfTodayJST.getTime() - jstOffset;
+
+    // 2. Figure out “yesterday’s” start
+    // (subtract 1 from the date)
+    const startOfYesterdayJST = new Date(
+      nowJST.getFullYear(),
+      nowJST.getMonth(),
+      nowJST.getDate() - 1,
+      0, 0, 0, 0
+    );
+    const startOfYesterdayUTC_inMillis = startOfYesterdayJST.getTime() - jstOffset;
+
+    // Fetch channels
     const channels = await fetchPublicChannels(MATTERMOST_MAIN_TEAM);
     if (!channels) {
       return new Response(JSON.stringify({ error: "Failed to fetch channels" }), { status: 500 });
     }
 
-    // （2）JSTで「今日の0時」を求める
-    // サーバー時刻がUTCの場合、Date() はUTCベース
-    // JST(UTC+9)の「今日0時」を得るため:
-    const nowUTC = new Date();
-    // nowUTC から日本時間における「日付・月・年」を取り出すには、+9時間した日時を作り出し、
-    // その年/月/日を使ってあらためてUTCに変換すると「JSTの0時(UTCでは前日15時)」が得られる。
-    const jstOffset = 9 * 60 * 60 * 1000; // 9時間
-    const nowJST = new Date(nowUTC.getTime() + jstOffset);
-    const startOfDayJST = new Date(
-      nowJST.getFullYear(), 
-      nowJST.getMonth(),
-      nowJST.getDate(),
-      0, 0, 0, 0
+    // Filter for channels updated “yesterday”
+    const updatedYesterday = channels.filter((ch) =>
+      ch.type === "O" &&
+      ch.last_post_at >= startOfYesterdayUTC_inMillis &&
+      ch.last_post_at < endOfYesterdayUTC_inMillis &&
+      ch.id !== MATTERMOST_SUMMARY_CHANNEL
     );
-    // startOfDayJST はローカルタイム(コンストラクタ)なので、ミリ秒にすると「日本時間で0時」のローカルtimestamp
-    // UTCでのエポックに合わせたい場合は再度 getTime() - jstOffset してもOKだが、
-    // ポスト作成時間と比較するには「create_at」(Unixエポックms, UTC相当)に合わせて計算したほうがシンプル。
-    // ここではシンプルに「startOfDayUTC_inMillis = startOfDayJST.getTime() - jstOffset」とする:
-    const startOfDayUTC_inMillis = startOfDayJST.getTime() - jstOffset;
 
-    // （3）"今日更新があった" チャンネルをフィルタ last_post_at >= startOfDayUTC_inMillis
-    const updatedToday = channels.filter(
-        (ch) =>
-          ch.type === "O" &&
-          ch.last_post_at >= startOfDayUTC_inMillis &&
-          ch.id !== MATTERMOST_SUMMARY_CHANNEL // ここを追加
-      );
-      
-
-    // （4） チャンネルごとに「今日のポスト」を取得 → 文字列まとめ
-    let summaryRaw = ""; // OpenAIに投げる前の生データ
-    for (const ch of updatedToday) {
-      // チャンネルへのリンク
-      // Mattermostでは URL/{team_id}/channels/{channel.name} 形式が多い
+    let summaryRaw = "";
+    for (const ch of updatedYesterday) {
       const channelLink = `[${ch.display_name}](${MATTERMOST_URL}/mitoujr/channels/${ch.name})`;
       const channelId = ch.id;
 
-      // 今日のポスト一覧を取得
-      const todaysPosts = await fetchTodaysPosts(channelId, startOfDayUTC_inMillis);
-      if (todaysPosts.length === 0) {
+      // Fetch posts between these two times
+      const yesterdaysPosts = await fetchPostsInRange(channelId, startOfYesterdayUTC_inMillis, endOfYesterdayUTC_inMillis);
+      if (yesterdaysPosts.length === 0) {
         continue;
       }
 
-      // 見出し (リンク形式)
       summaryRaw += `\n【チャンネル】${channelLink}\n`;
-
-      // 各ポストを列挙
-      for (const p of todaysPosts) {
-        // ユーザーIDやユーザー名をここで取得するには、追加のAPI呼び出しが必要
-        // サンプルでは p.user_id だけあるが "誰が" の部分は user_id 表記か簡単に user_id を載せる想定
-        // mention (@xxxx)を無効化 => "@xxxx" を全部 "xxxx" に置換
+      for (const p of yesterdaysPosts) {
         const cleanMessage = removeMentions(p.message);
-
-        // 時刻をJST表示に変換
         const jstTimeString = toJSTString(p.create_at);
-        const userName = await fetchUserName(p.user_id)
-        summaryRaw += `  - ${userName} (${jstTimeString}): ${cleanMessage}\n`
+        const userName = await fetchUserName(p.user_id);
+        summaryRaw += `  - ${userName} (${jstTimeString}): ${cleanMessage}\n`;
       }
-      summaryRaw += "\n"; // 改行
+      summaryRaw += "\n";
     }
 
     if (!summaryRaw.trim()) {
-      // 今日更新があった投稿が何もない場合
-      await postToMattermost("今日は更新がありませんでした。");
-      return new Response(JSON.stringify({ message: "No updates today" }), { status: 200 });
+      await postToMattermost("昨日は更新がありませんでした。");
+      return new Response(JSON.stringify({ message: "No updates yesterday" }), { status: 200 });
     }
 
-    // (5) OpenAI で整形
-    const promptUser = `Mattermostの各チャンネルに投稿された情報をまとめたいです。
-    - 冒頭に、日付と、全体としてどんな投稿があったのかをまとめてください。
-    - それぞれの更新があったチャンネルについて、誰がどのような投稿をしたのか、簡単にまとめてください。
-    - Mattermostの各チャンネルへのリンクは、そのまま残してください。
-    \n\n${summaryRaw}`;
-    
+    // OpenAI summarization prompt
+    const promptUser = `昨日のMattermost投稿を整理してください。
+- 昨日の日付と、全体の投稿概要をまとめて表示してください。
+- 更新があったチャンネルごとに、誰がどのような投稿をしたのか簡潔に記載してください。
+- Mattermostへのリンクはそのまま残してください。
+
+${summaryRaw}`;
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
@@ -122,17 +112,15 @@ serve(async (req) => {
       ],
     });
 
-    const gptText = completion.choices[0]?.message?.content ?? "(OpenAI からの応答を取得できませんでした)";
+    const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
 
-    // (6) Mattermostに投稿 (OpenAI整形済み)
     await postToMattermost(gptText);
 
-    return new Response(
-      JSON.stringify({ message: "Posted today's channel summary." }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ message: "Posted yesterday's channel summary." }), {
+      status: 200,
+    });
   } catch (err) {
-    console.error("today-channels-summary error:", err);
+    console.error("yesterday-channels-summary error:", err);
     return new Response(JSON.stringify({ error: err?.message }), { status: 500 });
   }
 });
@@ -278,4 +266,47 @@ async function fetchUserName(userId: string): Promise<string> {
   userNameCache[userId] = data.username || "unknown"
 
   return userNameCache[userId]
+}
+
+// Example modified fetchPostsInRange function
+async function fetchPostsInRange(
+  channelId: string,
+  startUTC: number,
+  endUTC: number
+): Promise<any[]> {
+  try {
+    const url = `${MATTERMOST_URL}/api/v4/channels/${channelId}/posts?per_page=200`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${MATTERMOST_BOT_TOKEN}`,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) {
+      console.error("[fetchPostsInRange] failed", await res.text());
+      return [];
+    }
+
+    const data = await res.json();
+    if (!data.posts) {
+      return [];
+    }
+
+    const postIds: string[] = data.order || [];
+    const postsObj = data.posts;
+
+    // Filter by >= startUTC AND < endUTC
+    const result: any[] = [];
+    for (const pid of postIds) {
+      const p = postsObj[pid];
+      if (p && p.create_at >= startUTC && p.create_at < endUTC) {
+        result.push(p);
+      }
+    }
+    result.sort((a, b) => a.create_at - b.create_at);
+    return result;
+  } catch (err) {
+    console.error("[fetchPostsInRange] error:", err);
+    return [];
+  }
 }
