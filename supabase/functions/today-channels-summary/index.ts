@@ -38,6 +38,7 @@ serve(async (req) => {
     const nowUTC = new Date();
     const jstOffset = 9 * 60 * 60 * 1000;
     const nowJST = new Date(nowUTC.getTime() + jstOffset);
+    console.log(`nowJST=${nowJST}`);
     const startOfTodayJST = new Date(
       nowJST.getFullYear(),
       nowJST.getMonth(),
@@ -66,7 +67,7 @@ serve(async (req) => {
     const updatedYesterday = channels.filter((ch) =>
       ch.type === "O" &&
       ch.last_post_at >= startOfYesterdayUTC_inMillis &&
-      ch.last_post_at < endOfYesterdayUTC_inMillis &&
+      //ch.last_post_at < endOfYesterdayUTC_inMillis &&
       ch.id !== MATTERMOST_SUMMARY_CHANNEL
     );
 
@@ -97,10 +98,12 @@ serve(async (req) => {
     }
 
     // OpenAI summarization prompt
-    const promptUser = `昨日のMattermost投稿を整理してください。
-- 昨日の日付と、全体の投稿概要をまとめて表示してください。
-- 更新があったチャンネルごとに、誰がどのような投稿をしたのか簡潔に記載してください。
+    const promptUser = `昨日のMattermost投稿を、チャンネルごとにまとめてください。
+- 昨日の日付と、全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
+- 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかをまとめて。決して、すべての投稿を羅列しないでください。
+- 投稿の時間は無視してください。
 - Mattermostへのリンクはそのまま残してください。
+- 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
 
 ${summaryRaw}`;
 
@@ -113,7 +116,7 @@ ${summaryRaw}`;
     });
 
     const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
-
+    console.log(gptText);
     await postToMattermost(gptText);
 
     return new Response(JSON.stringify({ message: "Posted yesterday's channel summary." }), {
