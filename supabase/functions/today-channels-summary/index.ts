@@ -68,7 +68,8 @@ serve(async (req) => {
       ch.type === "O" &&
       ch.last_post_at >= startOfYesterdayUTC_inMillis &&
       //ch.last_post_at < endOfYesterdayUTC_inMillis &&
-      ch.id !== MATTERMOST_SUMMARY_CHANNEL
+      ch.id !== MATTERMOST_SUMMARY_CHANNEL &&
+      !ch.display_name.toLowerCase().includes('notification')
     );
 
     let summaryRaw = "";
@@ -104,6 +105,7 @@ serve(async (req) => {
 - 投稿の時間は無視してください。
 - Mattermostへのリンクはそのまま残してください。
 - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
+- 最後にかならず、「今日一番おもしろかったチャンネル」を選んで、表彰してください。
 
 ${summaryRaw}`;
 
