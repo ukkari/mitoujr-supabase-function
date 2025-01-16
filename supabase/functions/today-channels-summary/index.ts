@@ -3,6 +3,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import OpenAI from "https://deno.land/x/openai@v4.69.0/mod.ts";
 import * as cheerio from "https://esm.sh/cheerio@1.0.0-rc.12";
+import { getReactions } from "../_shared/mattermost.ts";
 
 /** 環境変数 */
 const MATTERMOST_URL = Deno.env.get("MATTERMOST_URL") ?? "";
@@ -104,14 +105,17 @@ serve(async (req) => {
 
 ** ステップ **
 1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
-2. 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。決して、すべての投稿を羅列しないでください。
+2. 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。
+- 決して、すべての投稿を羅列しないでください。
 - もし、チャンネルに「が入室しました」のような誰かが入室したことを示すシステムメッセージの投稿しかなかった場合は、チャンネル自体をまとめに含めないでください。
 - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
+- emoji がリアクションに使われていたら、うまくそれもまとめに含めてください。
 3. 最後にかならず、「今日一番おもしろかったチャンネル」を選んで、「ずんだもん」として表彰してください。なにが面白かったのか、今後どんな投稿があるといいのかに言及しつつ「ずんだもん」として落としてください。
 
 ** 全体の指示 **
 - Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
 [z-times-hara](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hara)
+- :face_palm: のような記載は、emojiなので、前後に半角スペースを入れてそのまま残してください。
 
 ** ずんだもんのルール **
 - ずんだもんなのだ！と自己紹介をしてから回答すること
@@ -285,8 +289,12 @@ async function fetchUserName(userId: string): Promise<string> {
   return userNameCache[userId]
 }
 
-// Example modified fetchPostsInRange function
-async function fetchPostsInRange(
+/**
+ * 指定した channelId 内の投稿を startUTC～endUTC の間で取得し、
+ * 各投稿で検出した外部URLの OGP 情報をメッセージ本文に追記しつつ、
+ * さらに「誰がどんな絵文字をつけたか」を取得して格納します。
+ */
+export async function fetchPostsInRange(
   channelId: string,
   startUTC: number,
   endUTC: number
@@ -312,14 +320,14 @@ async function fetchPostsInRange(
     const postIds: string[] = data.order || [];
     const postsObj = data.posts;
 
-    // Filter by >= startUTC AND < endUTC
+    // 範囲内 (startUTC <= create_at < endUTC) でフィルタ
     const result: any[] = [];
     for (const pid of postIds) {
       const p = postsObj[pid];
       if (p && p.create_at >= startUTC && p.create_at < endUTC) {
-        // 外部URLを検出（MATTERMOST_URLを除く）
+        // ----- 外部URL (MATTERMOST_URL 系除外) をチェックして OGP を追記 -----
         const urls = (p.message.match(/https?:\/\/[^\s]+/g) || [])
-          .filter(url => !url.startsWith(MATTERMOST_URL));
+          .filter((link) => !link.startsWith(MATTERMOST_URL));
         
         if (urls.length > 0) {
           try {
@@ -327,7 +335,6 @@ async function fetchPostsInRange(
             const html = await response.text();
             const $ = cheerio.load(html);
             
-            // OGPの説明を取得
             const ogDescription = $('meta[property="og:description"]').attr('content');
             const ogTitle = $('meta[property="og:title"]').attr('content');
             
@@ -341,10 +348,28 @@ async function fetchPostsInRange(
             console.warn(`Failed to fetch OGP for URL: ${urls[0]}`, error);
           }
         }
-        
+
+        // ----- 追記: 各投稿のリアクション情報を取得し、p.message の末尾に追記 -----
+        try {
+          const reactions = await getReactions(p.id);
+          if (reactions.length > 0) {
+            // それぞれのリアクションについてユーザ名を取得して文字列を作成
+            const reactionStrings: string[] = [];
+            for (const r of reactions) {
+              const userName = await fetchUserName(r.user_id);
+              reactionStrings.push(`:${r.emoji_name}: by @${userName}`);
+            }
+            p.message += `\n\n---\nReactions:\n${reactionStrings.join("\n")}`;
+          }
+        } catch (err) {
+          //console.log(`No reactions for post ${p.id}`, err);
+        }
+
         result.push(p);
       }
     }
+
+    // 古い→新しい順にソート
     result.sort((a, b) => a.create_at - b.create_at);
     return result;
   } catch (err) {
