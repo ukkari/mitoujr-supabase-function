@@ -2,6 +2,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import OpenAI from "https://deno.land/x/openai@v4.69.0/mod.ts";
+import * as cheerio from "https://esm.sh/cheerio@1.0.0-rc.12";
 
 /** 環境変数 */
 const MATTERMOST_URL = Deno.env.get("MATTERMOST_URL") ?? "";
@@ -102,17 +103,18 @@ serve(async (req) => {
     const promptUser = `昨日のMattermost投稿を、チャンネルごとにまとめてください。
 - 昨日の日付と、全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
 - 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかをまとめて。決して、すべての投稿を羅列しないでください。
-- 投稿の時間は無視してください。
-- Mattermostへのリンクはそのまま残してください。
+- もし、チャンネルに「が入室しました」という投稿しかなかった場合は、チャンネルをまとめに含めないでください。
 - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
 - 最後にかならず、「今日一番おもしろかったチャンネル」を選んで、表彰してください。
+- Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
+[z-times-hara](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hara)
 
 ${summaryRaw}`;
 
     const completion = await openai.chat.completions.create({
-      model: "chatgpt-4o-latest",
+      model: "o1",
       messages: [
-        { role: "system", content: "You are a helpful assistant." },
+        { role: "system", content: "You are a helpful assistant summarizing multiple posts on Mattermost channel." },
         { role: "user", content: promptUser },
       ],
     });
@@ -120,7 +122,7 @@ ${summaryRaw}`;
     const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
     
     console.log(gptText);
-    //await postToMattermost(gptText);
+    await postToMattermost(gptText);
 
     return new Response(JSON.stringify({ message: "Posted yesterday's channel summary." }), {
       status: 200,
@@ -298,6 +300,31 @@ async function fetchPostsInRange(
     for (const pid of postIds) {
       const p = postsObj[pid];
       if (p && p.create_at >= startUTC && p.create_at < endUTC) {
+        // 外部URLを検出（MATTERMOST_URLを除く）
+        const urls = (p.message.match(/https?:\/\/[^\s]+/g) || [])
+          .filter(url => !url.startsWith(MATTERMOST_URL));
+        
+        if (urls.length > 0) {
+          try {
+            const response = await fetch(urls[0]);
+            const html = await response.text();
+            const $ = cheerio.load(html);
+            
+            // OGPの説明を取得
+            const ogDescription = $('meta[property="og:description"]').attr('content');
+            const ogTitle = $('meta[property="og:title"]').attr('content');
+            
+            if (ogDescription || ogTitle) {
+              const ogInfo = [];
+              if (ogTitle) ogInfo.push(ogTitle);
+              if (ogDescription) ogInfo.push(ogDescription);
+              p.message = `${p.message}\n> (${ogInfo.join(' - ')})`;
+            }
+          } catch (error) {
+            console.warn(`Failed to fetch OGP for URL: ${urls[0]}`, error);
+          }
+        }
+        
         result.push(p);
       }
     }
