@@ -101,8 +101,8 @@ serve(async (req) => {
 
     // OpenAI summarization prompt
     const promptUser = `昨日のMattermost投稿を、チャンネルごとにまとめてください。
-- 昨日の日付と、全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
-- 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかをまとめて。決して、すべての投稿を羅列しないでください。
+- 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
+- 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。決して、すべての投稿を羅列しないでください。
 - もし、チャンネルに「が入室しました」という投稿しかなかった場合は、チャンネルをまとめに含めないでください。
 - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
 - 最後にかならず、「今日一番おもしろかったチャンネル」を選んで、表彰してください。
@@ -112,7 +112,7 @@ serve(async (req) => {
 ${summaryRaw}`;
 
     const completion = await openai.chat.completions.create({
-      model: "o1",
+      model: "chatgpt-4o-latest",
       messages: [
         { role: "system", content: "You are a helpful assistant summarizing multiple posts on Mattermost channel." },
         { role: "user", content: promptUser },
