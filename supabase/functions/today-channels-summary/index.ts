@@ -38,7 +38,6 @@ serve(async (req) => {
     const nowUTC = new Date();
     const jstOffset = 9 * 60 * 60 * 1000;
     const nowJST = new Date(nowUTC.getTime() + jstOffset);
-    console.log(`nowJST=${nowJST}`);
     const startOfTodayJST = new Date(
       nowJST.getFullYear(),
       nowJST.getMonth(),
@@ -86,12 +85,13 @@ serve(async (req) => {
       summaryRaw += `\n【チャンネル】${channelLink}\n`;
       for (const p of yesterdaysPosts) {
         const cleanMessage = removeMentions(p.message);
-        const jstTimeString = toJSTString(p.create_at);
         const userName = await fetchUserName(p.user_id);
-        summaryRaw += `  - ${userName} (${jstTimeString}): ${cleanMessage}\n`;
+        summaryRaw += `  - ${userName}: ${cleanMessage}\n`;
       }
       summaryRaw += "\n";
     }
+
+    console.log(summaryRaw);
 
     if (!summaryRaw.trim()) {
       await postToMattermost("昨日は更新がありませんでした。");
@@ -118,8 +118,9 @@ ${summaryRaw}`;
     });
 
     const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
+    
     console.log(gptText);
-    await postToMattermost(gptText);
+    //await postToMattermost(gptText);
 
     return new Response(JSON.stringify({ message: "Posted yesterday's channel summary." }), {
       status: 200,
@@ -135,14 +136,6 @@ function removeMentions(text: string): string {
   // 例: "@abc" を "abc" に置換
   // "@abc-def" なども想定
   return text.replace(/@([a-zA-Z0-9._\-]+)/g, "$1");
-}
-
-/** UTCエポックms を JST表示に変換 */
-function toJSTString(utcMillis: number): string {
-  // JSTはUTC+9時間
-  const jst = new Date(utcMillis + 9 * 60 * 60 * 1000);
-  // 日本時間でロケール表示
-  return jst.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
 }
 
 /** Mattermost API (GET) でチャンネル一覧(パブリック)を取得 */
