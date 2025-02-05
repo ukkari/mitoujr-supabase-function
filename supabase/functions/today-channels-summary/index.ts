@@ -337,49 +337,49 @@ export async function fetchPostsInRange(
         const urls = (p.message.match(/https?:\/\/[^\s]+/g) || [])
           .filter((link) => !link.startsWith(MATTERMOST_URL));
         
-        if (urls.length > 0) {
-          try {
-            console.log(`Fetching OGP for URL: ${urls[0]}`);
-            console.log(`Fetching URL: ${urls[0]}`);
-            try {
-              const response = await fetch(urls[0]);
-              console.log(`Response status: ${response.status}`);
-              const reader = response.body?.getReader();
-              const decoder = new TextDecoder("utf-8");
-              let done = false;
-              let htmlSnippet = "";
+        // if (urls.length > 0) {
+        //   try {
+        //     console.log(`Fetching OGP for URL: ${urls[0]}`);
+        //     console.log(`Fetching URL: ${urls[0]}`);
+        //     try {
+        //       const response = await fetch(urls[0]);
+        //       console.log(`Response status: ${response.status}`);
+        //       const reader = response.body?.getReader();
+        //       const decoder = new TextDecoder("utf-8");
+        //       let done = false;
+        //       let htmlSnippet = "";
               
-              while (!done) {
-                const { value, done: streamDone } = await reader?.read() || {};
-                done = streamDone;
-                if (value) {
-                  htmlSnippet += decoder.decode(value, { stream: true });
-                  const ogDescriptionMatch = htmlSnippet.match(/<meta property="og:description" content="([^"]*)"/);
-                  const ogTitleMatch = htmlSnippet.match(/<meta property="og:title" content="([^"]*)"/);
+        //       while (!done) {
+        //         const { value, done: streamDone } = await reader?.read() || {};
+        //         done = streamDone;
+        //         if (value) {
+        //           htmlSnippet += decoder.decode(value, { stream: true });
+        //           const ogDescriptionMatch = htmlSnippet.match(/<meta property="og:description" content="([^"]*)"/);
+        //           const ogTitleMatch = htmlSnippet.match(/<meta property="og:title" content="([^"]*)"/);
                   
-                  if (ogDescriptionMatch || ogTitleMatch) {
-                    const ogDescription = ogDescriptionMatch ? ogDescriptionMatch[1] : null;
-                    const ogTitle = ogTitleMatch ? ogTitleMatch[1] : null;
-                    console.log(`OG Description: ${ogDescription}`);
-                    console.log(`OG Title: ${ogTitle}`);
+        //           if (ogDescriptionMatch || ogTitleMatch) {
+        //             const ogDescription = ogDescriptionMatch ? ogDescriptionMatch[1] : null;
+        //             const ogTitle = ogTitleMatch ? ogTitleMatch[1] : null;
+        //             console.log(`OG Description: ${ogDescription}`);
+        //             console.log(`OG Title: ${ogTitle}`);
                     
-                    if (ogDescription || ogTitle) {
-                      const ogInfo = [];
-                      if (ogTitle) ogInfo.push(ogTitle);
-                      if (ogDescription) ogInfo.push(ogDescription);
-                      p.message = `${p.message}\n> (${ogInfo.join(' - ')})`;
-                    }
-                    break;
-                  }
-                }
-              }
-            } catch (error) {
-              console.error(`Error fetching OGP for URL: ${urls[0]}`, error);
-            }
-          } catch (error) {
-            console.warn(`Failed to fetch OGP for URL: ${urls[0]}`, error);
-          }
-        }
+        //             if (ogDescription || ogTitle) {
+        //               const ogInfo = [];
+        //               if (ogTitle) ogInfo.push(ogTitle);
+        //               if (ogDescription) ogInfo.push(ogDescription);
+        //               p.message = `${p.message}\n> (${ogInfo.join(' - ')})`;
+        //             }
+        //             break;
+        //           }
+        //         }
+        //       }
+        //     } catch (error) {
+        //       console.error(`Error fetching OGP for URL: ${urls[0]}`, error);
+        //     }
+        //   } catch (error) {
+        //     console.warn(`Failed to fetch OGP for URL: ${urls[0]}`, error);
+        //   }
+        // }
 
         // ----- 追記: 各投稿のリアクション情報を取得し、p.message の末尾に追記 -----
         try {
