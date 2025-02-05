@@ -305,6 +305,7 @@ export async function fetchPostsInRange(
   endUTC: number
 ): Promise<any[]> {
   try {
+    console.log(`Fetching posts in range for channel: ${channelId}`);
     const url = `${MATTERMOST_URL}/api/v4/channels/${channelId}/posts?per_page=200`;
     const res = await fetch(url, {
       headers: {
@@ -319,6 +320,7 @@ export async function fetchPostsInRange(
 
     const data = await res.json();
     if (!data.posts) {
+      console.log("No posts found in response data.");
       return [];
     }
 
@@ -330,12 +332,14 @@ export async function fetchPostsInRange(
     for (const pid of postIds) {
       const p = postsObj[pid];
       if (p && p.create_at >= startUTC && p.create_at < endUTC) {
+        console.log(`Processing post: ${p.id}`);
         // ----- 外部URL (MATTERMOST_URL 系除外) をチェックして OGP を追記 -----
         const urls = (p.message.match(/https?:\/\/[^\s]+/g) || [])
           .filter((link) => !link.startsWith(MATTERMOST_URL));
         
         if (urls.length > 0) {
           try {
+            console.log(`Fetching OGP for URL: ${urls[0]}`);
             const response = await fetch(urls[0]);
             const html = await response.text();
             const $ = cheerio.load(html);
@@ -356,6 +360,7 @@ export async function fetchPostsInRange(
 
         // ----- 追記: 各投稿のリアクション情報を取得し、p.message の末尾に追記 -----
         try {
+          console.log(`Fetching reactions for post: ${p.id}`);
           const reactions = await getReactions(p.id);
           if (reactions.length > 0) {
             // それぞれのリアクションについてユーザ名を取得して文字列を作成
@@ -367,7 +372,7 @@ export async function fetchPostsInRange(
             p.message += `\n\n---\nReactions:\n${reactionStrings.join("\n")}`;
           }
         } catch (err) {
-          //console.log(`No reactions for post ${p.id}`, err);
+          console.log(`No reactions for post ${p.id}`, err);
         }
 
         result.push(p);
@@ -376,6 +381,7 @@ export async function fetchPostsInRange(
 
     // 古い→新しい順にソート
     result.sort((a, b) => a.create_at - b.create_at);
+    console.log("Posts processed and sorted.");
     return result;
   } catch (err) {
     console.error("[fetchPostsInRange] error:", err);
