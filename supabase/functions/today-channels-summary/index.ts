@@ -340,18 +340,27 @@ export async function fetchPostsInRange(
         if (urls.length > 0) {
           try {
             console.log(`Fetching OGP for URL: ${urls[0]}`);
-            const response = await fetch(urls[0]);
-            const html = await response.text();
-            const $ = cheerio.load(html);
+            console.log(`Fetching URL: ${urls[0]}`);
+            try {
+              const response = await fetch(urls[0]);
+              console.log(`Response status: ${response.status}`);
+              const html = await response.text();
+              console.log(`HTML length: ${html.length}`);
+              const $ = cheerio.load(html);
             
-            const ogDescription = $('meta[property="og:description"]').attr('content');
-            const ogTitle = $('meta[property="og:title"]').attr('content');
+              const ogDescription = $('meta[property="og:description"]').attr('content');
+              const ogTitle = $('meta[property="og:title"]').attr('content');
+              console.log(`OG Description: ${ogDescription}`);
+              console.log(`OG Title: ${ogTitle}`);
             
-            if (ogDescription || ogTitle) {
-              const ogInfo = [];
-              if (ogTitle) ogInfo.push(ogTitle);
-              if (ogDescription) ogInfo.push(ogDescription);
-              p.message = `${p.message}\n> (${ogInfo.join(' - ')})`;
+              if (ogDescription || ogTitle) {
+                const ogInfo = [];
+                if (ogTitle) ogInfo.push(ogTitle);
+                if (ogDescription) ogInfo.push(ogDescription);
+                p.message = `${p.message}\n> (${ogInfo.join(' - ')})`;
+              }
+            } catch (error) {
+              console.error(`Error fetching OGP for URL: ${urls[0]}`, error);
             }
           } catch (error) {
             console.warn(`Failed to fetch OGP for URL: ${urls[0]}`, error);
