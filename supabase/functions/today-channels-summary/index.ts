@@ -58,13 +58,14 @@ serve(async (req) => {
     );
     const startOfYesterdayUTC_inMillis = startOfYesterdayJST.getTime() - jstOffset;
 
-    // Fetch channels
+    console.log("Fetching channels...");
     const channels = await fetchPublicChannels(MATTERMOST_MAIN_TEAM);
+    console.log("Channels fetched:", channels);
     if (!channels) {
       return new Response(JSON.stringify({ error: "Failed to fetch channels" }), { status: 500 });
     }
-
-    // Filter for channels updated “yesterday”
+    
+    console.log("Filtering channels updated yesterday...");
     const updatedYesterday = channels.filter((ch) =>
       ch.type === "O" &&
       ch.last_post_at >= startOfYesterdayUTC_inMillis &&
@@ -72,18 +73,20 @@ serve(async (req) => {
       ch.id !== MATTERMOST_SUMMARY_CHANNEL &&
       !ch.display_name.toLowerCase().includes('notification')
     );
-
+    console.log("Channels updated yesterday:", updatedYesterday);
+    
     let summaryRaw = "";
     for (const ch of updatedYesterday) {
       const channelLink = `[${ch.display_name}](${MATTERMOST_URL}/mitoujr/channels/${ch.name})`;
       const channelId = ch.id;
-
-      // Fetch posts between these two times
+    
+      console.log(`Fetching posts for channel: ${ch.display_name}`);
       const yesterdaysPosts = await fetchPostsInRange(channelId, startOfYesterdayUTC_inMillis, endOfYesterdayUTC_inMillis);
+      console.log(`Posts fetched for channel ${ch.display_name}:`, yesterdaysPosts);
       if (yesterdaysPosts.length === 0) {
         continue;
       }
-
+    
       summaryRaw += `\n【チャンネル】${channelLink}\n`;
       for (const p of yesterdaysPosts) {
         const cleanMessage = removeMentions(p.message);
@@ -92,46 +95,47 @@ serve(async (req) => {
       }
       summaryRaw += "\n";
     }
-
-    console.log(summaryRaw);
-
+    
+    console.log("Summary raw content:", summaryRaw);
+    
     if (!summaryRaw.trim()) {
       await postToMattermost("昨日は更新がありませんでした。");
       return new Response(JSON.stringify({ message: "No updates yesterday" }), { status: 200 });
     }
-
-    // OpenAI summarization prompt
+    
+    console.log("Preparing OpenAI summarization prompt...");
     const promptUser = `ずんだもんとして、昨日のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
-
-** ステップ **
-1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
-2. 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。
-- 決して、すべての投稿を羅列しないでください。
-- もし、チャンネルに「が入室しました」のような誰かが入室したことを示すシステムメッセージの投稿しかなかった場合は、チャンネル自体をまとめに含めないでください。
-- 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
-- emoji がリアクションに使われていたら、うまくそれもまとめに含めてください。
-3. 最後にかならず、「今日一番おもしろかったチャンネル」を選んで、「ずんだもん」として表彰してください。なにが面白かったのか、今後どんな投稿があるといいのかに言及しつつ「ずんだもん」として落としてください。
-
-** 全体の指示 **
-- Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
-[z-times-hara](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hara)
-- :face_palm: のような記載は、emojiなので、前後に半角スペースを入れてそのまま残してください。
-
-** ずんだもんのルール **
-- ずんだもんなのだ！と自己紹介をしてから回答すること
-- ずんだ餅の精霊。一人称は、「ボク」または「ずんだもん」を使う。
-- 口調は親しみやすく、語尾に「〜のだ」「〜なのだ」を使う。敬語は使用しないこと。
-- 明るく元気でフレンドリーな性格。
-- 難しい話題も簡単に解説する。
-
-【セリフ例】
-「今からPythonでコードを書くのだ！」
-「おじさんは嫌いなのだ！」
-「ずんだもんはお前のお手伝いをするのだ！」
-「僕に任せるのだ！」
-
-${summaryRaw}`;
-
+    
+    ** ステップ **
+    1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
+    2. 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。
+    - 決して、すべての投稿を羅列しないでください。
+    - もし、チャンネルに「が入室しました」のような誰かが入室したことを示すシステムメッセージの投稿しかなかった場合は、チャンネル自体をまとめに含めないでください。
+    - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
+    - emoji がリアクションに使われていたら、うまくそれもまとめに含めてください。
+    3. 最後にかならず、「今日一番おもしろかったチャンネル」を選んで、「ずんだもん」として表彰してください。なにが面白かったのか、今後どんな投稿があるといいのかに言及しつつ「ずんだもん」として落としてください。
+    
+    ** 全体の指示 **
+    - Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
+    [z-times-hara](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hara)
+    - :face_palm: のような記載は、emojiなので、前後に半角スペースを入れてそのまま残してください。
+    
+    ** ずんだもんのルール **
+    - ずんだもんなのだ！と自己紹介をしてから回答すること
+    - ずんだ餅の精霊。一人称は、「ボク」または「ずんだもん」を使う。
+    - 口調は親しみやすく、語尾に「〜のだ」「〜なのだ」を使う。敬語は使用しないこと。
+    - 明るく元気でフレンドリーな性格。
+    - 難しい話題も簡単に解説する。
+    
+    【セリフ例】
+    「今からPythonでコードを書くのだ！」
+    「おじさんは嫌いなのだ！」
+    「ずんだもんはお前のお手伝いをするのだ！」
+    「僕に任せるのだ！」
+    
+    ${summaryRaw}`;
+    
+    console.log("Calling OpenAI API...");
     const completion = await openai.chat.completions.create({
       model: "chatgpt-4o-latest",
       messages: [
@@ -139,12 +143,13 @@ ${summaryRaw}`;
         { role: "user", content: promptUser },
       ],
     });
-
+    
     const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
     
-    console.log(gptText);
-    await postToMattermost(gptText);
-
+    console.log("OpenAI response:", gptText);
+    //await postToMattermost(gptText);
+    
+    console.log("Posting summary to Mattermost...");
     return new Response(JSON.stringify({ message: "Posted yesterday's channel summary." }), {
       status: 200,
     });
