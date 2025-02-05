@@ -147,7 +147,7 @@ serve(async (req) => {
     const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
     
     console.log("OpenAI response:", gptText);
-    //await postToMattermost(gptText);
+    await postToMattermost(gptText);
     
     console.log("Posting summary to Mattermost...");
     return new Response(JSON.stringify({ message: "Posted yesterday's channel summary." }), {
@@ -333,45 +333,6 @@ export async function fetchPostsInRange(
       const p = postsObj[pid];
       if (p && p.create_at >= startUTC && p.create_at < endUTC) {
         console.log(`Processing post: ${p.id}`);
-        // ----- 外部URL (MATTERMOST_URL 系除外) をチェックして OGP を追記 -----
-        const urls = (p.message.match(/https?:\/\/[^\s]+/g) || [])
-          .filter((link) => !link.startsWith(MATTERMOST_URL));
-        
-        if (urls.length > 0) {
-          try {
-            console.log(`Fetching Open Graph metadata for URL: ${urls[0]}`);
-            const ogUrl = `${MATTERMOST_URL}/api/v4/opengraph`;
-            const response = await fetch(ogUrl, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${MATTERMOST_BOT_TOKEN}`,
-                Accept: "application/json",
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ url: urls[0] }),
-            });
-
-            if (!response.ok) {
-              console.error("Failed to fetch Open Graph metadata", await response.text());
-              return;
-            }
-
-            const ogData = await response.json();
-            const ogDescription = ogData.description || null;
-            const ogTitle = ogData.title || null;
-            console.log(`OG Description: ${ogDescription}`);
-            console.log(`OG Title: ${ogTitle}`);
-
-            if (ogDescription || ogTitle) {
-              const ogInfo = [];
-              if (ogTitle) ogInfo.push(ogTitle);
-              if (ogDescription) ogInfo.push(ogDescription);
-              p.message = `${p.message}\n> (${ogInfo.join(' - ')})`;
-            }
-          } catch (error) {
-            console.error(`Error fetching Open Graph metadata for URL: ${urls[0]}`, error);
-          }
-        }
 
         // ----- 追記: 各投稿のリアクション情報を取得し、p.message の末尾に追記 -----
         try {
