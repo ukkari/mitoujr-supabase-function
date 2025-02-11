@@ -14,6 +14,34 @@ const MATTERMOST_SUMMARY_CHANNEL = Deno.env.get("MATTERMOST_SUMMARY_CHANNEL") ??
 /** OpenAI API キー (GPT-4) */
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
 
+// Store logs when in debug mode
+let debugLogs: string[] = [];
+
+// Override console.log in debug mode
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+function setupDebugLogging(debug: boolean) {
+  debugLogs = [];
+  if (debug) {
+    console.log = (...args) => {
+      debugLogs.push(args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+      ).join(' '));
+      originalConsoleLog.apply(console, args);
+    };
+    console.error = (...args) => {
+      debugLogs.push('[ERROR] ' + args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+      ).join(' '));
+      originalConsoleError.apply(console, args);
+    };
+  } else {
+    console.log = originalConsoleLog;
+    console.error = originalConsoleError;
+  }
+}
+
 // OpenAIクライアント初期化
 const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
@@ -31,9 +59,11 @@ const openai = new OpenAI({
  */
 serve(async (req) => {
   try {
-    // Check for debug parameter in the URL
     const url = new URL(req.url);
     const debug = url.searchParams.get('debug') === 'true';
+    
+    // Setup debug logging if needed
+    setupDebugLogging(debug);
 
     // CORS対応 (必要なら)
     if (req.method === "OPTIONS") {
@@ -159,16 +189,32 @@ serve(async (req) => {
       console.log("Debug mode: Skipping Mattermost post");
     }
     
-    // Return the summary in the response regardless of debug mode
+    // Return the summary and logs in debug mode
     return new Response(JSON.stringify({ 
       message: debug ? "Debug mode: Generated summary without posting" : "Posted yesterday's channel summary.",
-      summary: gptText 
+      summary: gptText,
+      ...(debug && { logs: debugLogs })
     }), {
       status: 200,
+      headers: {
+        'Content-Type': 'application/json'
+      }
     });
   } catch (err) {
     console.error("yesterday-channels-summary error:", err);
-    return new Response(JSON.stringify({ error: err?.message }), { status: 500 });
+    return new Response(JSON.stringify({ 
+      error: err?.message,
+      ...(debug && { logs: debugLogs })
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+  } finally {
+    // Restore original console functions
+    console.log = originalConsoleLog;
+    console.error = originalConsoleError;
   }
 });
 
