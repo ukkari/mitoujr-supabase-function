@@ -3,5 +3,5 @@
 Update secrets
 npx supabase secrets set --env-file ./supabase/functions/.env
 
-supabase functions deploy　today-channels-summary
+supabase functions deploy today-channels-summary --no-verify-jwt
 　
