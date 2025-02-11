@@ -31,6 +31,10 @@ const openai = new OpenAI({
  */
 serve(async (req) => {
   try {
+    // Check for debug parameter in the URL
+    const url = new URL(req.url);
+    const debug = url.searchParams.get('debug') === 'true';
+
     // CORS対応 (必要なら)
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204 });
@@ -147,10 +151,19 @@ serve(async (req) => {
     const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
     
     console.log("OpenAI response:", gptText);
-    await postToMattermost(gptText);
     
-    console.log("Posting summary to Mattermost...");
-    return new Response(JSON.stringify({ message: "Posted yesterday's channel summary." }), {
+    if (!debug) {
+      await postToMattermost(gptText);
+      console.log("Posted summary to Mattermost");
+    } else {
+      console.log("Debug mode: Skipping Mattermost post");
+    }
+    
+    // Return the summary in the response regardless of debug mode
+    return new Response(JSON.stringify({ 
+      message: debug ? "Debug mode: Generated summary without posting" : "Posted yesterday's channel summary.",
+      summary: gptText 
+    }), {
       status: 200,
     });
   } catch (err) {
