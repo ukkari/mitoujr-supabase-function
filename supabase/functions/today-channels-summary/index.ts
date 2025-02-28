@@ -70,7 +70,7 @@ serve(async (req) => {
       return new Response(null, { status: 204 });
     }
 
-    // 1. Figure out “today’s” start (for end of yesterday)
+    // 1. Figure out "today's" start (for end of yesterday)
     const nowUTC = new Date();
     const jstOffset = 9 * 60 * 60 * 1000;
     const nowJST = new Date(nowUTC.getTime() + jstOffset);
@@ -82,7 +82,7 @@ serve(async (req) => {
     );
     const endOfYesterdayUTC_inMillis = startOfTodayJST.getTime() - jstOffset;
 
-    // 2. Figure out “yesterday’s” start
+    // 2. Figure out "yesterday's" start
     // (subtract 1 from the date)
     const startOfYesterdayJST = new Date(
       nowJST.getFullYear(),
@@ -113,6 +113,13 @@ serve(async (req) => {
     for (const ch of updatedYesterday) {
       const channelLink = `[${ch.display_name}](${MATTERMOST_URL}/mitoujr/channels/${ch.name})`;
       const channelId = ch.id;
+      
+      // チャンネルが制限されているかチェック
+      const isRestricted = await isRestrictedChannel(channelId);
+      if (isRestricted) {
+        console.log(`Channel ${ch.display_name} is restricted. Skipping.`);
+        continue;
+      }
     
       console.log(`Fetching posts for channel: ${ch.display_name}`);
       const yesterdaysPosts = await fetchPostsInRange(channelId, startOfYesterdayUTC_inMillis, endOfYesterdayUTC_inMillis);
@@ -294,6 +301,56 @@ async function fetchTodaysPosts(
   }
 }
 
+/**
+ * チャンネルのpurposeまたはheaderに禁止絵文字(🈲 or 🚫)が含まれているかチェック
+ * 含まれていればtrue、そうでなければfalseを返す
+ */
+async function isRestrictedChannel(channelId: string): Promise<boolean> {
+  try {
+    const url = `${MATTERMOST_URL}/api/v4/channels/${channelId}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${MATTERMOST_BOT_TOKEN}`,
+        Accept: "application/json",
+      },
+    });
+    
+    if (!res.ok) {
+      console.error("[isRestrictedChannel] failed", await res.text());
+      return false;
+    }
+    
+    const data = await res.json();
+    const purpose = data.purpose || "";
+    const header = data.header || "";
+    
+    // 🈲 or 🚫 が含まれているかチェック
+    return purpose.includes("🈲") || purpose.includes("🚫") || 
+           header.includes("🈲") || header.includes("🚫");
+  } catch (err) {
+    console.error("[isRestrictedChannel] error:", err);
+    return false;
+  }
+}
+
+/**
+ * スレッドの最初のメッセージの冒頭に禁止絵文字(🈲 or 🚫)が含まれているかチェック
+ * 含まれていればtrue、そうでなければfalseを返す
+ */
+function isRestrictedThread(post: any, postsObj: Record<string, any>): boolean {
+  // スレッドのルートポストを取得
+  const rootId = post.root_id || post.id;
+  const rootPost = postsObj[rootId];
+  
+  if (!rootPost) {
+    return false;
+  }
+  
+  // ルートポストのメッセージの冒頭に禁止絵文字があるかチェック
+  const message = rootPost.message || "";
+  return message.trimStart().startsWith("🈲") || message.trimStart().startsWith("🚫");
+}
+
 /** Mattermost に投稿する (投稿先チャンネルは MATTERMOST_SUMMARY_CHANNEL) */
 async function postToMattermost(message: string): Promise<void> {
   if (!MATTERMOST_SUMMARY_CHANNEL) {
@@ -365,6 +422,14 @@ export async function fetchPostsInRange(
 ): Promise<any[]> {
   try {
     console.log(`Fetching posts in range for channel: ${channelId}`);
+    
+    // まず、チャンネルが制限されているかチェック
+    const isRestricted = await isRestrictedChannel(channelId);
+    if (isRestricted) {
+      console.log(`Channel ${channelId} is restricted. Skipping.`);
+      return [];
+    }
+    
     const url = `${MATTERMOST_URL}/api/v4/channels/${channelId}/posts?per_page=200`;
     const res = await fetch(url, {
       headers: {
@@ -392,6 +457,12 @@ export async function fetchPostsInRange(
       const p = postsObj[pid];
       if (p && p.create_at >= startUTC && p.create_at < endUTC) {
         console.log(`Processing post: ${p.id}`);
+        
+        // 制限されたスレッドに属する投稿はスキップ
+        if (isRestrictedThread(p, postsObj)) {
+          console.log(`Post ${p.id} is in a restricted thread. Skipping.`);
+          continue;
+        }
 
         // ----- 追記: 各投稿のリアクション情報を取得し、p.message の末尾に追記 -----
         try {
