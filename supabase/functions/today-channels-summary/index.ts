@@ -50,8 +50,8 @@ const openai = new OpenAI({
 /**
  * このEdge Functionが呼ばれたら以下を行う:
  *  1. メインチーム内のチャンネル一覧(パブリック)を取得
- *  2. 今日(午前0時JST以降)更新があったチャンネルだけ抽出
- *  3. 該当チャンネルの「今日のポスト」を取得
+ *  2. 今日または昨日(午前0時JST以降)更新があったチャンネルだけ抽出
+ *  3. 該当チャンネルの「今日または昨日のポスト」を取得
  *  4. 全ポストをまとめ、OpenAI APIで整形
  *  5. Mattermostに投稿
  *
@@ -61,6 +61,7 @@ serve(async (req) => {
   try {
     const url = new URL(req.url);
     const debug = url.searchParams.get('debug') === 'true';
+    const forToday = url.searchParams.get('forToday') === 'true';
     
     // Setup debug logging if needed
     setupDebugLogging(debug);
@@ -92,6 +93,11 @@ serve(async (req) => {
     );
     const startOfYesterdayUTC_inMillis = startOfYesterdayJST.getTime() - jstOffset;
 
+    // Determine the time range based on forToday parameter
+    const startTimeUTC_inMillis = forToday ? endOfYesterdayUTC_inMillis : startOfYesterdayUTC_inMillis;
+    const endTimeUTC_inMillis = forToday ? Date.now() : endOfYesterdayUTC_inMillis;
+    const timeRangeDescription = forToday ? "今日" : "昨日";
+
     console.log("Fetching channels...");
     const channels = await fetchPublicChannels(MATTERMOST_MAIN_TEAM);
     console.log("Channels fetched:", channels);
@@ -99,18 +105,17 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "Failed to fetch channels" }), { status: 500 });
     }
     
-    console.log("Filtering channels updated yesterday...");
-    const updatedYesterday = channels.filter((ch) =>
+    console.log(`Filtering channels updated ${timeRangeDescription}...`);
+    const updatedChannels = channels.filter((ch) =>
       ch.type === "O" &&
-      ch.last_post_at >= startOfYesterdayUTC_inMillis &&
-      //ch.last_post_at < endOfYesterdayUTC_inMillis &&
+      ch.last_post_at >= startTimeUTC_inMillis &&
       ch.id !== MATTERMOST_SUMMARY_CHANNEL &&
       !ch.display_name.toLowerCase().includes('notification')
     );
-    console.log("Channels updated yesterday:", updatedYesterday);
+    console.log(`Channels updated ${timeRangeDescription}:`, updatedChannels);
     
     let summaryRaw = "";
-    for (const ch of updatedYesterday) {
+    for (const ch of updatedChannels) {
       const channelLink = `[${ch.display_name}](${MATTERMOST_URL}/mitoujr/channels/${ch.name})`;
       const channelId = ch.id;
       
@@ -122,14 +127,14 @@ serve(async (req) => {
       }
     
       console.log(`Fetching posts for channel: ${ch.display_name}`);
-      const yesterdaysPosts = await fetchPostsInRange(channelId, startOfYesterdayUTC_inMillis, endOfYesterdayUTC_inMillis);
-      console.log(`Posts fetched for channel ${ch.display_name}:`, yesterdaysPosts);
-      if (yesterdaysPosts.length === 0) {
+      const posts = await fetchPostsInRange(channelId, startTimeUTC_inMillis, endTimeUTC_inMillis);
+      console.log(`Posts fetched for channel ${ch.display_name}:`, posts);
+      if (posts.length === 0) {
         continue;
       }
     
       summaryRaw += `\n【チャンネル】${channelLink}\n`;
-      for (const p of yesterdaysPosts) {
+      for (const p of posts) {
         const cleanMessage = removeMentions(p.message);
         const userName = await fetchUserName(p.user_id);
         summaryRaw += `  - ${userName}: ${cleanMessage}\n`;
@@ -140,12 +145,12 @@ serve(async (req) => {
     console.log("Summary raw content:", summaryRaw);
     
     if (!summaryRaw.trim()) {
-      await postToMattermost("昨日は更新がありませんでした。");
-      return new Response(JSON.stringify({ message: "No updates yesterday" }), { status: 200 });
+      await postToMattermost(`${timeRangeDescription}は更新がありませんでした。`);
+      return new Response(JSON.stringify({ message: `No updates ${timeRangeDescription}` }), { status: 200 });
     }
     
     console.log("Preparing OpenAI summarization prompt...");
-    const promptUser = `ずんだもんとして、昨日のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
+    const promptUser = `ずんだもんとして、${timeRangeDescription}のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
     
     ** ステップ **
     1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
@@ -154,7 +159,7 @@ serve(async (req) => {
     - もし、チャンネルに「が入室しました」のような誰かが入室したことを示すシステムメッセージの投稿しかなかった場合は、チャンネル自体をまとめに含めないでください。
     - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
     - emoji がリアクションに使われていたら、うまくそれもまとめに含めてください。
-    3. 最後にかならず、「今日一番おもしろかったチャンネル」を選んで、「ずんだもん」として表彰してください。なにが面白かったのか、今後どんな投稿があるといいのかに言及しつつ「ずんだもん」として落としてください。
+    3. 最後にかならず、「${timeRangeDescription}一番おもしろかったチャンネル」を選んで、「ずんだもん」として表彰してください。なにが面白かったのか、今後どんな投稿があるといいのかに言及しつつ「ずんだもん」として落としてください。
     
     ** 全体の指示 **
     - Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
@@ -198,7 +203,7 @@ serve(async (req) => {
     
     // Return the summary and logs in debug mode
     return new Response(JSON.stringify({ 
-      message: debug ? "Debug mode: Generated summary without posting" : "Posted yesterday's channel summary.",
+      message: debug ? "Debug mode: Generated summary without posting" : `Posted ${timeRangeDescription}'s channel summary.`,
       summary: gptText,
       ...(debug && { logs: debugLogs })
     }), {
@@ -208,7 +213,7 @@ serve(async (req) => {
       }
     });
   } catch (err) {
-    console.error("yesterday-channels-summary error:", err);
+    console.error("today-channels-summary error:", err);
     return new Response(JSON.stringify({ 
       error: err?.message,
       ...(debug && { logs: debugLogs })
