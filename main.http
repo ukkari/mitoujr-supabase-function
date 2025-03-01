@@ -1,1 +1,1 @@
-POST https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?debug=true
+POST https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?debug=true&forToday=true

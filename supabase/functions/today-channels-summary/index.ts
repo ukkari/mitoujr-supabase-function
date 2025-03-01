@@ -183,9 +183,10 @@ serve(async (req) => {
     
     console.log("Calling OpenAI API...");
     const completion = await openai.chat.completions.create({
-      model: "chatgpt-4o-latest",
+      //model: "chatgpt-4o-latest",
+      model: "gpt-4.5-preview",
       messages: [
-        { role: "system", content: "You are a helpful assistant summarizing multiple posts on Mattermost channel." },
+        { role: "system", content: "You are a helpful assistant summarizing multiple posts on Mattermost channel. 日本語の響きを重視して、美しく、芸術作品のようにまとめます。" },
         { role: "user", content: promptUser },
       ],
     });
