@@ -62,6 +62,7 @@ serve(async (req) => {
     const url = new URL(req.url);
     const debug = url.searchParams.get('debug') === 'true';
     const forToday = url.searchParams.get('forToday') === 'true';
+    const type = url.searchParams.get('type') || 'text'; // デフォルトはtext
     
     // Setup debug logging if needed
     setupDebugLogging(debug);
@@ -149,70 +150,184 @@ serve(async (req) => {
       return new Response(JSON.stringify({ message: `No updates ${timeRangeDescription}` }), { status: 200 });
     }
     
-    console.log("Preparing OpenAI summarization prompt...");
-    const promptUser = `ずんだもんとして、${timeRangeDescription}のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
-    
-    ** ステップ **
-    1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
-    2. 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。
-    - 決して、すべての投稿を羅列しないでください。(e.g. XXXがYYYと言った、の羅列)
-    - もし、チャンネルに「が入室しました」のような誰かが入室したことを示すシステムメッセージの投稿しかなかった場合は、チャンネル自体をまとめに含めないでください。
-    - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
-    - emoji がリアクションに使われていたら、うまくそれもまとめに含めてください。
-    3. 最後にかならず、「${timeRangeDescription}一番おもしろかったチャンネル」を選んで、「ずんだもん」として表彰してください。なにが面白かったのか、今後どんな投稿があるといいのかに言及しつつ「ずんだもん」として落としてください。
-    
-    ** 全体の指示 **
-    - Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
-    [z-times-hara](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hara)
-    - :face_palm: のような記載は、emojiなので、前後に半角スペースを入れてそのまま残してください。
-    
-    ** ずんだもんのルール **
-    - ずんだもんなのだ！と自己紹介をしてから回答すること
-    - ずんだ餅の精霊。一人称は、「ボク」または「ずんだもん」を使う。
-    - 口調は親しみやすく、語尾に「〜のだ」「〜なのだ」を使う。敬語は使用しないこと。
-    - 明るく元気でフレンドリーな性格。
-    - 難しい話題も簡単に解説する。
-    
-    【セリフ例】
-    「今からPythonでコードを書くのだ！」
-    「おじさんは嫌いなのだ！」
-    「ずんだもんはお前のお手伝いをするのだ！」
-    「僕に任せるのだ！」
-    
-    ${summaryRaw}`;
-    
-    console.log("Calling OpenAI API...");
-    const completion = await openai.chat.completions.create({
-      model: "chatgpt-4o-latest",
-      //model: "gpt-4.5-preview",
-      messages: [
-        { role: "system", content: "You are a helpful assistant summarizing multiple posts on Mattermost channel. 日本語の響きを重視して、美しく、芸術作品のようにまとめます。" },
-        { role: "user", content: promptUser },
-      ],
-    });
-    
-    const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
-    
-    console.log("OpenAI response:", gptText);
-    
-    if (!debug) {
-      await postToMattermost(gptText);
-      console.log("Posted summary to Mattermost");
-    } else {
-      console.log("Debug mode: Skipping Mattermost post");
-    }
-    
-    // Return the summary and logs in debug mode
-    return new Response(JSON.stringify({ 
-      message: debug ? "Debug mode: Generated summary without posting" : `Posted ${timeRangeDescription}'s channel summary.`,
-      summary: gptText,
-      ...(debug && { logs: debugLogs })
-    }), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json'
+    if (type === 'audio') {
+      // 音声生成処理
+      console.log("Processing audio generation...");
+      
+      console.log("Preparing OpenAI summarization prompt...");
+      const promptUser = `      
+You're going to create a podcast based for 未踏ジュニアコミュニティ on the chat log of 未踏ジュニア ${timeRangeDescription} shared below.
+
+Opening:
+– Begin with a welcoming phrase: “皆さんおはようございます！未踏ジュニアポッドキャストへようこそ！” 
+
+Dialog Structure:
+– Use two hosts (Speaker 1 and Speaker 2) who engage in a conversational back-and-forth.
+– Alternate between short, punchy statements and longer explanations.
+– Use frequent affirmations like "そうですね” "たしかに” "ほんそれ" and “ほんとうにそう！” to maintain flow and agreement.
+
+Language and Tone:
+– Keep the language informal and accessible. Use contractions and colloquialisms.
+– Maintain an enthusiastic, energetic tone throughout.
+– Use rhetorical questions to transition between points: “これ面白くないですか？"
+– Employ phrases like “えーっと” and “なんていうか” "えー" "あのー" to maintain a casual feel.
+
+Content Presentation:
+– Introduce source material (e.g., channel names, user names) early in the discussion. 
+- Do not use the raw channel names and user names. Make it more human-like like and natural in Japanese like "のチャンネル" "さんによると"
+– Use analogies to explain complex concepts: “まるで XXX みたい！”
+– Break down ideas into digestible chunks, often using numbered points or clear transitions.
+
+Interaction Between Hosts:
+– Have one host pose questions or express confusion, allowing the other to explain.
+– Use phrases like “いやー、わかってますね” to validate each other’s points.
+– Build on each other’s ideas, creating a collaborative feel.
+
+Engagement Techniques:
+– Address the audience directly at times: “今聞いている未踏ジュニアのみなさんも”
+– Pose thought-provoking questions for the audience to consider.
+
+Structure and Pacing:
+– Start with a broad introduction of the chat log and narrow down to discussions in a specific room. Clearly mention the humanized name of the channel.
+– Use phrases like “まとめると” to summarize and move to new points.
+– Maintain a brisk pace, but allow for moments of reflection on bigger ideas.
+
+Concluding the Episode:
+– Signal the wrap-up with “そろそろ時間なんですが”
+– Pose a final thought-provoking question or takeaway.
+– Use the phrase “じゃあ” to transition to the closing.
+– Encourage continued engagement: “未踏ジュニアのコミュニティを一緒に盛り上げていきましょう”
+– End with a consistent message to help users keep excited about the community like “明日は XXX な話があるのか、楽しみですね。”
+
+Overall Flow:
+– Begin with high level overview of what discussed ${timeRangeDescription} 
+– After that, introduce what's discussed in each channel one by one as comprehensive as possible.
+– Discuss implications and broader context of the new information.
+– Conclude with how this knowledge affects the listener or the field at large.
+
+Output structure
+Follow the following structure
+Speaker 1: 皆さん、こんにちは！未踏ジュニアポッドキャストへようこそ！
+Speaker 2: いや〜、今日も始まりましたね！
+Remember to maintain a balance between informative content and engaging conversation, always keeping the tone friendly and accessible regardless of the complexity of the topic.
+Chat log
+${summaryRaw}`;
+      
+      console.log("Calling OpenAI API...");
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4.1-2025-04-14",
+        //model: "gpt-4.5-preview",
+        messages: [
+          { role: "system", content: "You're a professional podcast creator specialized in Japanese." },
+          { role: "user", content: promptUser },
+        ],
+      });
+      
+      const audioScript = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
+      
+      console.log("OpenAI response:", audioScript);
+      
+      // 音声生成ジョブを送信
+      const audioJob = await submitAudioJob(audioScript);
+      if (!audioJob) {
+        throw new Error("Failed to submit audio job");
       }
-    });
+      
+      console.log("Audio job submitted:", audioJob.job_id);
+      
+      // SSEで音声生成完了を待つ
+      const audioUrl = await waitForAudioCompletion(audioJob.events_url);
+      if (!audioUrl) {
+        throw new Error("Failed to generate audio");
+      }
+      
+      console.log("Audio generation completed:", audioUrl);
+      
+      if (!debug) {
+        // URLを直接Mattermostに投稿
+        await postToMattermost(`今日のチャンネルサマリー（音声版）\n${audioUrl}`);
+        console.log("Posted audio summary URL to Mattermost");
+      } else {
+        console.log(`Debug mode: Skipping Mattermost audio post 今日のチャンネルサマリー（音声版）\n${audioUrl}`);
+      }
+      
+      return new Response(JSON.stringify({
+        message: debug ? "Debug mode: Generated audio without posting" : `Posted ${timeRangeDescription}'s channel audio summary.`,
+        audioUrl: audioUrl,
+        ...(debug && { logs: debugLogs })
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    } else {
+      // テキスト生成処理（既存の処理）
+      console.log("Preparing OpenAI summarization prompt...");
+      const promptUser = `ずんだもんとして、${timeRangeDescription}のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
+      
+      ** ステップ **
+      1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
+      2. 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。
+      - 決して、すべての投稿を羅列しないでください。(e.g. XXXがYYYと言った、の羅列)
+      - もし、チャンネルに「が入室しました」のような誰かが入室したことを示すシステムメッセージの投稿しかなかった場合は、チャンネル自体をまとめに含めないでください。
+      - 「が入室しました」のようなMattermostのシステムメッセージは、まとめに含めないでください。
+      - emoji がリアクションに使われていたら、うまくそれもまとめに含めてください。
+      3. 最後にかならず、「${timeRangeDescription}一番おもしろかったチャンネル」を選んで、「ずんだもん」として表彰してください。なにが面白かったのか、今後どんな投稿があるといいのかに言及しつつ「ずんだもん」として落としてください。
+      
+      ** 全体の指示 **
+      - Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
+      [z-times-hara](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hara)
+      - :face_palm: のような記載は、emojiなので、前後に半角スペースを入れてそのまま残してください。
+      
+      ** ずんだもんのルール **
+      - ずんだもんなのだ！と自己紹介をしてから回答すること
+      - ずんだ餅の精霊。一人称は、「ボク」または「ずんだもん」を使う。
+      - 口調は親しみやすく、語尾に「〜のだ」「〜なのだ」を使う。敬語は使用しないこと。
+      - 明るく元気でフレンドリーな性格。
+      - 難しい話題も簡単に解説する。
+      
+      【セリフ例】
+      「今からPythonでコードを書くのだ！」
+      「おじさんは嫌いなのだ！」
+      「ずんだもんはお前のお手伝いをするのだ！」
+      「僕に任せるのだ！」
+      
+      ${summaryRaw}`;
+      
+      console.log("Calling OpenAI API...");
+      const completion = await openai.chat.completions.create({
+        model: "chatgpt-4o-latest",
+        //model: "gpt-4.5-preview",
+        messages: [
+          { role: "system", content: "You are a helpful assistant summarizing multiple posts on Mattermost channel. 日本語の響きを重視して、美しく、芸術作品のようにまとめます。" },
+          { role: "user", content: promptUser },
+        ],
+      });
+      
+      const gptText = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
+      
+      console.log("OpenAI response:", gptText);
+      
+      if (!debug) {
+        await postToMattermost(gptText);
+        console.log("Posted summary to Mattermost");
+      } else {
+        console.log("Debug mode: Skipping Mattermost post");
+      }
+      
+      // Return the summary and logs in debug mode
+      return new Response(JSON.stringify({ 
+        message: debug ? "Debug mode: Generated summary without posting" : `Posted ${timeRangeDescription}'s channel summary.`,
+        summary: gptText,
+        ...(debug && { logs: debugLogs })
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+    }
   } catch (err) {
     console.error("today-channels-summary error:", err);
     return new Response(JSON.stringify({ 
@@ -498,5 +613,89 @@ export async function fetchPostsInRange(
   } catch (err) {
     console.error("[fetchPostsInRange] error:", err);
     return [];
+  }
+}
+
+/** 音声生成ジョブを送信する */
+async function submitAudioJob(script: string): Promise<{ job_id: string; events_url: string } | null> {
+  try {
+    const response = await fetch('https://submit-audio-job-oxjztisiiq-an.a.run.app', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        script: script,
+        speakers: ["Speaker 1", "Speaker 2"],
+        prompt: "Japanese tech podcaster speaking fast and casually",
+        model: "gemini-2.5-flash-preview-tts"
+      }),
+    });
+    
+    if (!response.ok) {
+      console.error('[submitAudioJob] API call failed:', await response.text());
+      return null;
+    }
+    
+    return await response.json();
+  } catch (err) {
+    console.error('[submitAudioJob] error:', err);
+    return null;
+  }
+}
+
+/** SSEを使って音声生成ジョブの完了を待つ */
+async function waitForAudioCompletion(eventsUrl: string): Promise<string | null> {
+  try {
+    console.log('Connecting to SSE:', eventsUrl);
+    
+    // Deno環境でSSEを処理するため、fetchのstreamを使用
+    const response = await fetch(eventsUrl);
+    if (!response.ok) {
+      console.error('[waitForAudioCompletion] SSE connection failed');
+      return null;
+    }
+    
+    const reader = response.body?.getReader();
+    if (!reader) {
+      console.error('[waitForAudioCompletion] No reader available');
+      return null;
+    }
+    
+    const decoder = new TextDecoder();
+    let buffer = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = JSON.parse(line.slice(6));
+          console.log('SSE update:', data);
+          
+          // waiting状態でもURLがあれば返す
+          if (data.url && (data.status === 'waiting' || data.status === 'completed')) {
+            reader.releaseLock();
+            return data.url;
+          } else if (data.status === 'error' || data.status === 'timeout') {
+            reader.releaseLock();
+            console.error('Audio generation failed:', data);
+            return null;
+          }
+        }
+      }
+    }
+    
+    reader.releaseLock();
+    console.error('SSE stream ended without completion');
+    return null;
+  } catch (err) {
+    console.error('[waitForAudioCompletion] error:', err);
+    return null;
   }
 }
