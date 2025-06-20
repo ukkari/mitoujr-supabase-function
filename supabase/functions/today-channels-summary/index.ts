@@ -47,6 +47,21 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
+// Available voices for audio generation
+const AVAILABLE_VOICES = [
+  'Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda',
+  'Orus', 'Aoede', 'Callirhoe', 'Autonoe', 'Enceladus', 'Iapetus',
+  'Umbriel', 'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi',
+  'Laomedeia', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima',
+  'Achird', 'Zubenelgenubi', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafar'
+];
+
+// Function to get random voices
+function getRandomVoices(): [string, string] {
+  const shuffled = [...AVAILABLE_VOICES].sort(() => Math.random() - 0.5);
+  return [shuffled[0], shuffled[1]];
+}
+
 /**
  * このEdge Functionが呼ばれたら以下を行う:
  *  1. メインチーム内のチャンネル一覧(パブリック)を取得
@@ -63,6 +78,7 @@ serve(async (req) => {
     const debug = url.searchParams.get('debug') === 'true';
     const forToday = url.searchParams.get('forToday') === 'true';
     const type = url.searchParams.get('type') || 'text'; // デフォルトはtext
+    const lang = (url.searchParams.get('lang') || 'ja-JP') as 'ja-JP' | 'en-US'; // デフォルトはja-JP
     
     // Setup debug logging if needed
     setupDebugLogging(debug);
@@ -155,49 +171,107 @@ serve(async (req) => {
       console.log("Processing audio generation...");
       
       console.log("Preparing OpenAI summarization prompt...");
-      const promptUser = `      
-You're going to create a podcast based for 未踏ジュニアコミュニティ on the chat log of 未踏ジュニア ${timeRangeDescription} shared below.
+      const getAudioPrompt = (language: 'ja-JP' | 'en-US') => {
+        const isJapanese = language === 'ja-JP';
+        
+        // Language-specific phrases
+        const phrases = {
+          opening: isJapanese 
+            ? "皆さんおはようございます！未踏ジュニアポッドキャストへようこそ！" 
+            : "Good morning everyone! Welcome to the Mitou Junior Podcast!",
+          affirmations: isJapanese
+            ? '"そうですね" "たしかに" "ほんそれ" and "ほんとうにそう！"'
+            : '"absolutely" "exactly" "totally" and "so true!"',
+          rhetorical: isJapanese
+            ? "これ面白くないですか？"
+            : "Isn't this fascinating?",
+          fillers: isJapanese
+            ? '"えーっと" and "なんていうか" "えー" "あのー"'
+            : '"um" and "you know" "well" "so"',
+          naturalizing: isJapanese
+            ? 'natural in Japanese like "のチャンネル" "さんによると"'
+            : 'natural in English like "in the channel" "according to"',
+          analogy: isJapanese
+            ? "まるで XXX みたい！"
+            : "It's like XXX!",
+          validation: isJapanese
+            ? "いやー、わかってますね"
+            : "wow, you really get it",
+          audience: isJapanese
+            ? "今聞いている未踏ジュニアのみなさんも"
+            : "For those of you listening from Mitou Junior",
+          summarize: isJapanese
+            ? "まとめると"
+            : "to sum it up",
+          wrapUp: isJapanese
+            ? "そろそろ時間なんですが"
+            : "We're running out of time, but",
+          transition: isJapanese
+            ? "じゃあ"
+            : "so",
+          encourage: isJapanese
+            ? "未踏ジュニアのコミュニティを一緒に盛り上げていきましょう"
+            : "Let's keep building this amazing Mitou Junior community together",
+          ending: isJapanese
+            ? "明日は XXX な話があるのか、楽しみですね。"
+            : "I can't wait to see what exciting discussions we'll have tomorrow.",
+          speaker1: isJapanese
+            ? "皆さん、こんにちは！未踏ジュニアポッドキャストへようこそ！"
+            : "Good morning everyone! Welcome to the Mitou Junior Podcast!",
+          speaker2: isJapanese
+            ? "いや〜、今日も始まりましたね！"
+            : "Oh wow, here we go again!",
+          community: isJapanese
+            ? "未踏ジュニアコミュニティ"
+            : "Mitou Junior Community",
+          projectName: isJapanese
+            ? "未踏ジュニア"
+            : "Mitou Junior"
+        };
+        
+        return `      
+You're going to create a podcast based for ${phrases.community} on the chat log of ${phrases.projectName} ${timeRangeDescription} shared below.
 
 Opening:
-– Begin with a welcoming phrase: “皆さんおはようございます！未踏ジュニアポッドキャストへようこそ！” 
+– Begin with a welcoming phrase: "${phrases.opening}" 
 
 Dialog Structure:
 – Use two hosts (Speaker 1 and Speaker 2) who engage in a conversational back-and-forth.
 – Alternate between short, punchy statements and longer explanations.
-– Use frequent affirmations like "そうですね” "たしかに” "ほんそれ" and “ほんとうにそう！” to maintain flow and agreement.
+– Use frequent affirmations like ${phrases.affirmations} to maintain flow and agreement.
 
 Language and Tone:
 – Keep the language informal and accessible. Use contractions and colloquialisms.
 – Maintain an enthusiastic, energetic tone throughout.
-– Use rhetorical questions to transition between points: “これ面白くないですか？"
-– Employ phrases like “えーっと” and “なんていうか” "えー" "あのー" to maintain a casual feel.
+– Use rhetorical questions to transition between points: "${phrases.rhetorical}"
+– Employ phrases like ${phrases.fillers} to maintain a casual feel.
 
 Content Presentation:
 – Introduce source material (e.g., channel names, user names) early in the discussion. 
-- Do not use the raw channel names and user names. Make it more human-like like and natural in Japanese like "のチャンネル" "さんによると"
-– Use analogies to explain complex concepts: “まるで XXX みたい！”
+- Do not use the raw channel names and user names. Make it more human-like like and ${phrases.naturalizing}
+– Use analogies to explain complex concepts: "${phrases.analogy}"
 – Break down ideas into digestible chunks, often using numbered points or clear transitions.
 
 Interaction Between Hosts:
 – Have one host pose questions or express confusion, allowing the other to explain.
-– Use phrases like “いやー、わかってますね” to validate each other’s points.
-– Build on each other’s ideas, creating a collaborative feel.
+– Use phrases like "${phrases.validation}" to validate each other's points.
+– Build on each other's ideas, creating a collaborative feel.
 
 Engagement Techniques:
-– Address the audience directly at times: “今聞いている未踏ジュニアのみなさんも”
+– Address the audience directly at times: "${phrases.audience}"
 – Pose thought-provoking questions for the audience to consider.
 
 Structure and Pacing:
 – Start with a broad introduction of the chat log and narrow down to discussions in a specific room. Clearly mention the humanized name of the channel.
-– Use phrases like “まとめると” to summarize and move to new points.
+– Use phrases like "${phrases.summarize}" to summarize and move to new points.
 – Maintain a brisk pace, but allow for moments of reflection on bigger ideas.
 
 Concluding the Episode:
-– Signal the wrap-up with “そろそろ時間なんですが”
+– Signal the wrap-up with "${phrases.wrapUp}"
 – Pose a final thought-provoking question or takeaway.
-– Use the phrase “じゃあ” to transition to the closing.
-– Encourage continued engagement: “未踏ジュニアのコミュニティを一緒に盛り上げていきましょう”
-– End with a consistent message to help users keep excited about the community like “明日は XXX な話があるのか、楽しみですね。”
+– Use the phrase "${phrases.transition}" to transition to the closing.
+– Encourage continued engagement: "${phrases.encourage}"
+– End with a consistent message to help users keep excited about the community like "${phrases.ending}"
 
 Overall Flow:
 – Begin with high level overview of what discussed ${timeRangeDescription} 
@@ -207,35 +281,36 @@ Overall Flow:
 
 Output structure
 Follow the following structure
-Speaker 1: 皆さん、こんにちは！未踏ジュニアポッドキャストへようこそ！
-Speaker 2: いや〜、今日も始まりましたね！
+Speaker 1: ${phrases.speaker1}
+Speaker 2: ${phrases.speaker2}
 Remember to maintain a balance between informative content and engaging conversation, always keeping the tone friendly and accessible regardless of the complexity of the topic.
 Chat log
 ${summaryRaw}`;
+      };
       
-      console.log("Calling OpenAI API...");
+      // Generate audio for specified language
+      console.log(`Generating ${lang} audio...`);
+      const prompt = getAudioPrompt(lang);
+      const systemPrompt = lang === 'ja-JP' 
+        ? "You're a professional podcast creator specialized in Japanese."
+        : "You're a professional podcast creator specialized in English.";
+      
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1-2025-04-14",
-        //model: "gpt-4.5-preview",
         messages: [
-          { role: "system", content: "You're a professional podcast creator specialized in Japanese." },
-          { role: "user", content: promptUser },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
         ],
       });
-      
       const audioScript = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
       
-      console.log("OpenAI response:", audioScript);
-      
-      // 音声生成ジョブを送信
-      const audioJob = await submitAudioJob(audioScript);
+      const audioJob = await submitAudioJob(audioScript, lang);
       if (!audioJob) {
         throw new Error("Failed to submit audio job");
       }
       
       console.log("Audio job submitted:", audioJob.job_id);
       
-      // SSEで音声生成完了を待つ
       const audioUrl = await waitForAudioCompletion(audioJob.events_url);
       if (!audioUrl) {
         throw new Error("Failed to generate audio");
@@ -244,16 +319,19 @@ ${summaryRaw}`;
       console.log("Audio generation completed:", audioUrl);
       
       if (!debug) {
-        // URLを直接Mattermostに投稿
-        await postToMattermost(`今日のチャンネルサマリー（音声版）\n${audioUrl}`);
-        console.log("Posted audio summary URL to Mattermost");
+        const title = lang === 'ja-JP' 
+          ? `チャンネルサマリー（音声版・日本語）\n${audioUrl}`
+          : `Channel Summary (Audio Version - English)\n${audioUrl}`;
+        await postToMattermost(title);
+        console.log(`Posted ${lang} audio summary URL to Mattermost`);
       } else {
-        console.log(`Debug mode: Skipping Mattermost audio post 今日のチャンネルサマリー（音声版）\n${audioUrl}`);
+        console.log(`Debug mode: Skipping Mattermost audio post for ${lang}: ${audioUrl}`);
       }
       
       return new Response(JSON.stringify({
-        message: debug ? "Debug mode: Generated audio without posting" : `Posted ${timeRangeDescription}'s channel audio summary.`,
+        message: debug ? "Debug mode: Generated audio without posting" : `Posted ${timeRangeDescription}'s channel audio summary in ${lang}.`,
         audioUrl: audioUrl,
+        language: lang,
         ...(debug && { logs: debugLogs })
       }), {
         status: 200,
@@ -617,8 +695,11 @@ export async function fetchPostsInRange(
 }
 
 /** 音声生成ジョブを送信する */
-async function submitAudioJob(script: string): Promise<{ job_id: string; events_url: string } | null> {
+async function submitAudioJob(script: string, language: 'ja-JP' | 'en-US'): Promise<{ job_id: string; events_url: string } | null> {
   try {
+    const [voice1, voice2] = getRandomVoices();
+    console.log(`Selected voices: ${voice1}, ${voice2}`);
+    
     const response = await fetch('https://submit-audio-job-oxjztisiiq-an.a.run.app', {
       method: 'POST',
       headers: {
@@ -627,8 +708,10 @@ async function submitAudioJob(script: string): Promise<{ job_id: string; events_
       body: JSON.stringify({
         script: script,
         speakers: ["Speaker 1", "Speaker 2"],
-        prompt: "Japanese tech podcaster speaking fast and casually",
-        model: "gemini-2.5-flash-preview-tts"
+        voices: [voice1, voice2],
+        prompt: language === 'ja-JP' ? "Japanese tech podcaster speaking very fast and casually" : "English tech podcaster speaking enthusiastically and casually",
+        model: "gemini-2.5-pro-preview-tts",
+        language: language
       }),
     });
     
