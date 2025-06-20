@@ -46,11 +46,14 @@ curl "https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summa
 # Today's text summary in debug mode
 curl "https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?forToday=true&debug=true"
 
-# Audio summary
+# Audio summary (Japanese - default)
 curl "https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?type=audio"
 
+# Audio summary (English)
+curl "https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?type=audio&lang=en-US"
+
 # Audio summary with debug
-curl "https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?forToday=false&debug=true&type=audio"
+curl "https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?forToday=false&debug=true&type=audio&lang=en-US"
 ```
 
 ## High-Level Architecture Overview
@@ -101,8 +104,9 @@ Main function that generates daily channel summaries from Mattermost.
 
 **Query Parameters:**
 - `forToday`: boolean - Generate today's summary instead of yesterday's
-- `type`: "text" | "audio" - Output format
+- `type`: "text" | "audio" - Output format (default: "text")
 - `debug`: boolean - Debug mode (no Mattermost posting)
+- `lang`: "ja-JP" | "en-US" - Language for audio generation (default: "ja-JP", only used when type="audio")
 
 **Key Components:**
 - Time range calculation (JST timezone handling)
@@ -110,6 +114,8 @@ Main function that generates daily channel summaries from Mattermost.
 - Post aggregation with user mentions and reactions
 - OpenAI integration for text summarization
 - Audio generation via external API with SSE monitoring
+- Multi-language support (Japanese and English) for audio output
+- Random voice selection from 30 available TTS voices
 
 #### 2. **reminder-cron**
 Automated reminder system for tracking task completion.
