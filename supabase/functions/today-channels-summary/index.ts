@@ -190,7 +190,7 @@ serve(async (req) => {
             : '"um" and "you know" "well" "so"',
           naturalizing: isJapanese
             ? 'natural in Japanese like "のチャンネル" "さんによると"'
-            : 'natural in English like "in the channel" "according to"',
+            : 'natural in English like "in the X channel" "according to X"',
           analogy: isJapanese
             ? "まるで XXX みたい！"
             : "It's like XXX!",
@@ -247,8 +247,8 @@ Language and Tone:
 – Employ phrases like ${phrases.fillers} to maintain a casual feel.
 
 Content Presentation:
-– Introduce source material (e.g., channel names, user names) early in the discussion. 
-- Do not use the raw channel names and user names. Make it more human-like like and ${phrases.naturalizing}
+– Always clearly mention a channel name, and user name in the discussion as the goal of the podcast to help users understand who said what where. 
+- Do not use the raw channel names and user names. Make it more ${phrases.naturalizing}
 – Use analogies to explain complex concepts: "${phrases.analogy}"
 – Break down ideas into digestible chunks, often using numbered points or clear transitions.
 
@@ -262,7 +262,7 @@ Engagement Techniques:
 – Pose thought-provoking questions for the audience to consider.
 
 Structure and Pacing:
-– Start with a broad introduction of the chat log and narrow down to discussions in a specific room. Clearly mention the humanized name of the channel.
+– Start with a broad introduction of the chat log and narrow down to discussions in a specific room. Clearly mention the humanized name of the channel and user name.
 – Use phrases like "${phrases.summarize}" to summarize and move to new points.
 – Maintain a brisk pace, but allow for moments of reflection on bigger ideas.
 
