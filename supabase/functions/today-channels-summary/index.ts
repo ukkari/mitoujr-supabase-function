@@ -80,6 +80,8 @@ serve(async (req) => {
     const type = url.searchParams.get('type') || 'text'; // デフォルトはtext
     const lang = (url.searchParams.get('lang') || 'ja-JP') as 'ja-JP' | 'en-US'; // デフォルトはja-JP
     
+    console.log(`Request parameters: debug=${debug}, forToday=${forToday}, type=${type}, lang=${lang}`);
+    
     // Setup debug logging if needed
     setupDebugLogging(debug);
 
@@ -114,42 +116,50 @@ serve(async (req) => {
     const startTimeUTC_inMillis = forToday ? endOfYesterdayUTC_inMillis : startOfYesterdayUTC_inMillis;
     const endTimeUTC_inMillis = forToday ? Date.now() : endOfYesterdayUTC_inMillis;
     const timeRangeDescription = forToday ? "今日" : "昨日";
+    
+    console.log(`Time range: ${new Date(startTimeUTC_inMillis).toISOString()} to ${new Date(endTimeUTC_inMillis).toISOString()}`);
 
     console.log("Fetching channels...");
     const channels = await fetchPublicChannels(MATTERMOST_MAIN_TEAM);
-    console.log("Channels fetched:", channels);
+    console.log("Channels fetched:", channels?.length || 0, "channels");
     if (!channels) {
       return new Response(JSON.stringify({ error: "Failed to fetch channels" }), { status: 500 });
     }
     
     console.log(`Filtering channels updated ${timeRangeDescription}...`);
+    console.log(`Filter criteria: type=O, last_post_at>=${startTimeUTC_inMillis}, id!=${MATTERMOST_SUMMARY_CHANNEL}`);
     const updatedChannels = channels.filter((ch) =>
       ch.type === "O" &&
       ch.last_post_at >= startTimeUTC_inMillis &&
       ch.id !== MATTERMOST_SUMMARY_CHANNEL &&
       !ch.display_name.toLowerCase().includes('notification')
     );
-    console.log(`Channels updated ${timeRangeDescription}:`, updatedChannels);
+    console.log(`Channels updated ${timeRangeDescription}:`, updatedChannels.length, "channels");
+    updatedChannels.forEach(ch => console.log(`  - ${ch.display_name} (${ch.name})`));
     
     let summaryRaw = "";
+    console.log("Starting to process channels...");
     for (const ch of updatedChannels) {
       const channelLink = `[${ch.display_name}](${MATTERMOST_URL}/mitoujr/channels/${ch.name})`;
       const channelId = ch.id;
       
       // チャンネルが制限されているかチェック
+      console.log(`Checking if channel ${ch.display_name} is restricted...`);
       const isRestricted = await isRestrictedChannel(channelId);
       if (isRestricted) {
         console.log(`Channel ${ch.display_name} is restricted. Skipping.`);
         continue;
       }
     
-      console.log(`Fetching posts for channel: ${ch.display_name}`);
+      console.log(`Fetching posts for channel: ${ch.display_name} (${channelId})`);
       const posts = await fetchPostsInRange(channelId, startTimeUTC_inMillis, endTimeUTC_inMillis);
-      console.log(`Posts fetched for channel ${ch.display_name}:`, posts);
+      console.log(`Posts fetched for channel ${ch.display_name}:`, posts.length, "posts");
       if (posts.length === 0) {
+        console.log(`No posts found for channel ${ch.display_name}. Skipping.`);
         continue;
       }
     
+      console.log(`Adding ${posts.length} posts from ${ch.display_name} to summary...`);
       summaryRaw += `\n【チャンネル】${channelLink}\n`;
       for (const p of posts) {
         const cleanMessage = removeMentions(p.message);
@@ -159,15 +169,19 @@ serve(async (req) => {
       summaryRaw += "\n";
     }
     
+    console.log("All channels processed.");
+    console.log("Summary raw content length:", summaryRaw.length, "characters");
     console.log("Summary raw content:", summaryRaw);
     
     if (!summaryRaw.trim()) {
+      console.log("No summary content generated. Posting 'no updates' message...");
       await postToMattermost(`${timeRangeDescription}は更新がありませんでした。`);
       return new Response(JSON.stringify({ message: `No updates ${timeRangeDescription}` }), { status: 200 });
     }
     
     if (type === 'audio') {
       // 音声生成処理
+      console.log("Type is 'audio'. Starting audio generation process...");
       console.log("Processing audio generation...");
       
       console.log("Preparing OpenAI summarization prompt...");
@@ -295,6 +309,7 @@ ${summaryRaw}`;
         ? "You're a professional podcast creator specialized in Japanese."
         : "You're a professional podcast creator specialized in English.";
       
+      console.log(`Calling OpenAI API for audio script generation (model: gpt-4.1-2025-04-14)...`);
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1-2025-04-14",
         messages: [
@@ -303,6 +318,7 @@ ${summaryRaw}`;
         ],
       });
       const audioScript = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
+      console.log(`Audio script generated. Length: ${audioScript.length} characters`);
       
       const audioJob = await submitAudioJob(audioScript, lang);
       if (!audioJob) {
@@ -620,7 +636,7 @@ export async function fetchPostsInRange(
   endUTC: number
 ): Promise<any[]> {
   try {
-    console.log(`Fetching posts in range for channel: ${channelId}`);
+    console.log(`Fetching posts in range for channel: ${channelId}, from ${new Date(startUTC).toISOString()} to ${new Date(endUTC).toISOString()}`);
     
     // まず、チャンネルが制限されているかチェック
     const isRestricted = await isRestrictedChannel(channelId);
@@ -652,14 +668,20 @@ export async function fetchPostsInRange(
 
     // 範囲内 (startUTC <= create_at < endUTC) でフィルタ
     const result: any[] = [];
+    console.log(`Total posts in channel: ${postIds.length}`);
+    let inRangeCount = 0;
+    let restrictedCount = 0;
+    
     for (const pid of postIds) {
       const p = postsObj[pid];
       if (p && p.create_at >= startUTC && p.create_at < endUTC) {
-        console.log(`Processing post: ${p.id}`);
+        inRangeCount++;
+        console.log(`Processing post: ${p.id} (created at ${new Date(p.create_at).toISOString()})`);
         
         // 制限されたスレッドに属する投稿はスキップ
         if (isRestrictedThread(p, postsObj)) {
           console.log(`Post ${p.id} is in a restricted thread. Skipping.`);
+          restrictedCount++;
           continue;
         }
 
@@ -686,7 +708,7 @@ export async function fetchPostsInRange(
 
     // 古い→新しい順にソート
     result.sort((a, b) => a.create_at - b.create_at);
-    console.log("Posts processed and sorted.");
+    console.log(`Posts summary: ${inRangeCount} in range, ${restrictedCount} restricted, ${result.length} included in results`);
     return result;
   } catch (err) {
     console.error("[fetchPostsInRange] error:", err);

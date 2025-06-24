@@ -4,4 +4,4 @@ POST https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summar
 ######
 POST https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?forToday=false&debug=true&type=audio&lang=en-US
 ######
-POST https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?type=audio&lang=en-US
+POST https://ybayntmemramsitrtlem.supabase.co/functions/v1/today-channels-summary?type=audio
