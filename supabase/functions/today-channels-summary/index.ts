@@ -314,7 +314,7 @@ ${summaryRaw}`;
       
       // Function to generate Zundamon single-person podcast prompt
       const getZundamonAudioPrompt = () => {
-        return `ずんだもんとして、${timeRangeDescription}のMattermost投稿についてポッドキャスト形式で一人語りしてください。
+        return `ずんだもんとして、${timeRangeDescription}のMattermost投稿についてポッドキャスト形式で一人語りしてください。誰が、どこのチャンネルで何を話していて、何で盛り上がっているのかを聞いた人がざっくり理解できる内容にしてください。
 
 **ずんだもんの設定**
 - ずんだ餅の精霊。一人称は「ボク」または「ずんだもん」
@@ -328,16 +328,19 @@ ${summaryRaw}`;
    
 2. 全体概要
    - ${timeRangeDescription}の投稿の全体的な雰囲気を説明
-   - 「${timeRangeDescription}はとっても盛り上がってたのだ！」のような感想を交える
+   - 「${timeRangeDescription}はとってもXXXだったのだ！」のような感想を交える
    
 3. チャンネルごとの詳細
    - 各チャンネルについて、誰がどんな投稿をしたか説明
-   - チャンネル名とユーザー名は自然な形で言及（「〜のチャンネルで」「〜さんが」など）
+   - Do not use the raw channel names and user names. Make it more 自然な形で日本語で読んで。
+   1. "z-times-yuukaiのチャンネルでは" ではなく、「ゆううかいさんのタイムズチャンネルで」、
+   2.「yuukaiさんが」ではなく「ゆううかいさんが」など）
    - 「これは面白いのだ！」「ボクもやってみたいのだ！」など、ずんだもんの感想を挟む
    - 時々「えーっと」「なんていうか」「あのー」などの間投詞を使う
+   - ずんだもんになりきって、くすっと笑ってしまうちょっとボケを含めるように。
    
 4. リアクションの紹介
-   - 絵文字リアクションがあった場合は「〜の絵文字がついてたのだ！みんな共感してるのだ！」のように紹介
+   - :face_palm: のような記載は、emojiなので、絵文字リアクションがあった場合は「〜の絵文字がついてたのだ！みんなXXしてるのだ！」のように紹介
    
 5. 表彰コーナー
    - 「さて、${timeRangeDescription}一番面白かったチャンネルを発表するのだ！」
@@ -412,7 +415,7 @@ ${summaryRaw}`;
       if (!debug) {
         let title;
         if (engine === 'voicevox') {
-          title = `ずんだもんのチャンネルサマリー（音声版）なのだ！\n${audioUrl}`;
+          title = `:zundamon: ずんだもんのチャンネルサマリー（音声版）なのだ！\n${audioUrl}`;
         } else {
           title = lang === 'ja-JP' 
             ? `チャンネルサマリー（音声版・日本語）\n${audioUrl}`
@@ -811,9 +814,9 @@ async function submitAudioJob(script: string, language: 'ja-JP' | 'en-US', engin
         script: script,
         engine: 'voicevox',
         speaker: 3, // ずんだもんのスピーカーID（通常は3）
-        speedScale: 1.1, // 話速（1.0が標準、1.1で少し速め）
-        pitchScale: 0, // 音高（0が標準）
-        intonationScale: 1, // 抑揚（1が標準）
+        speedScale: 1.15, // 話速（1.0が標準、1.15で元気よく速め）
+        pitchScale: 0.04, // 音高（0が標準、0.04で少し高めで明るい声）
+        intonationScale: 1.5, // 抑揚（1が標準、1.5で表現豊かに）
         volumeScale: 1 // 音量（1が標準）
       };
     } else {
@@ -1034,6 +1037,12 @@ async function synthesizeWithVoiceVox(script: string): Promise<string | null> {
         }
         
         const audioQuery = await queryResponse.json();
+        
+        // ずんだもんらしい元気な声になるようにパラメータを調整
+        audioQuery.speedScale = 1.15;      // 話速を少し速めに
+        audioQuery.pitchScale = 0.04;      // 音高を少し高めに（明るい声）
+        audioQuery.intonationScale = 1.5;  // 抑揚を豊かに
+        audioQuery.volumeScale = 1;        // 音量は標準
         
         // Step 2: Synthesize audio
         const synthesisUrl = `https://voicevox-zunda-597706528463.asia-northeast1.run.app/synthesis?speaker=3`;
