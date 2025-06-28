@@ -371,7 +371,7 @@ ${summaryRaw}`;
       
       ** 全体の指示 **
       - Mattermostのポストやチャンネルへのリンクは、必ず以下のフォーマットを使ってリンクをしてください。
-      [z-times-hara](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hara)
+      [z-times-hoge](https://mattermost.jr.mitou.org/mitoujr/channels/z-times-hoge)
       - :face_palm: のような記載は、emojiなので、前後に半角スペースを入れてそのまま残してください。
       
       ** ずんだもんのルール **
