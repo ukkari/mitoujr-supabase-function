@@ -2,8 +2,8 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import OpenAI from "https://deno.land/x/openai@v4.69.0/mod.ts";
-import * as cheerio from "https://esm.sh/cheerio@1.0.0-rc.12";
 import { getReactions } from "../_shared/mattermost.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 /** 環境変数 */
 const MATTERMOST_URL = Deno.env.get("MATTERMOST_URL") ?? "";
@@ -13,6 +13,13 @@ const MATTERMOST_SUMMARY_CHANNEL = Deno.env.get("MATTERMOST_SUMMARY_CHANNEL") ??
 
 /** OpenAI API キー (GPT-4) */
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+
+/** Supabase設定 */
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+// Supabaseクライアントの初期化
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // Store logs when in debug mode
 let debugLogs: string[] = [];
@@ -73,14 +80,17 @@ function getRandomVoices(): [string, string] {
  * 実行はSupabase Scheduler等で1日1回(または任意時間)に呼び出す想定
  */
 serve(async (req) => {
+  let debug = false; // デフォルト値を設定
+  
   try {
     const url = new URL(req.url);
-    const debug = url.searchParams.get('debug') === 'true';
+    debug = url.searchParams.get('debug') === 'true';
     const forToday = url.searchParams.get('forToday') === 'true';
     const type = url.searchParams.get('type') || 'text'; // デフォルトはtext
     const lang = (url.searchParams.get('lang') || 'ja-JP') as 'ja-JP' | 'en-US'; // デフォルトはja-JP
+    const engine = url.searchParams.get('engine') || 'gemini'; // デフォルトはgemini
     
-    console.log(`Request parameters: debug=${debug}, forToday=${forToday}, type=${type}, lang=${lang}`);
+    console.log(`Request parameters: debug=${debug}, forToday=${forToday}, type=${type}, lang=${lang}, engine=${engine}`);
     
     // Setup debug logging if needed
     setupDebugLogging(debug);
@@ -302,14 +312,68 @@ Chat log
 ${summaryRaw}`;
       };
       
-      // Generate audio for specified language
-      console.log(`Generating ${lang} audio...`);
-      const prompt = getAudioPrompt(lang);
-      const systemPrompt = lang === 'ja-JP' 
-        ? "You're a professional podcast creator specialized in Japanese."
-        : "You're a professional podcast creator specialized in English.";
+      // Function to generate Zundamon single-person podcast prompt
+      const getZundamonAudioPrompt = () => {
+        return `ずんだもんとして、${timeRangeDescription}のMattermost投稿についてポッドキャスト形式で一人語りしてください。
+
+**ずんだもんの設定**
+- ずんだ餅の精霊。一人称は「ボク」または「ずんだもん」
+- 語尾に「〜のだ」「〜なのだ」を必ず使う
+- 明るく元気でフレンドリーな性格
+- 時々独り言のような感想を挟む
+
+**ポッドキャストの構成**
+1. オープニング
+   - 「みんな〜！ずんだもんなのだ！${timeRangeDescription}の未踏ジュニアチャンネルサマリーを始めるのだ！」から始める
+   
+2. 全体概要
+   - ${timeRangeDescription}の投稿の全体的な雰囲気を説明
+   - 「${timeRangeDescription}はとっても盛り上がってたのだ！」のような感想を交える
+   
+3. チャンネルごとの詳細
+   - 各チャンネルについて、誰がどんな投稿をしたか説明
+   - チャンネル名とユーザー名は自然な形で言及（「〜のチャンネルで」「〜さんが」など）
+   - 「これは面白いのだ！」「ボクもやってみたいのだ！」など、ずんだもんの感想を挟む
+   - 時々「えーっと」「なんていうか」「あのー」などの間投詞を使う
+   
+4. リアクションの紹介
+   - 絵文字リアクションがあった場合は「〜の絵文字がついてたのだ！みんな共感してるのだ！」のように紹介
+   
+5. 表彰コーナー
+   - 「さて、${timeRangeDescription}一番面白かったチャンネルを発表するのだ！」
+   - 理由を説明しながら表彰
+   - 「これからも楽しい投稿を期待してるのだ！」
+   
+6. エンディング
+   - 「今日のサマリーはここまでなのだ！」
+   - 「明日はどんな面白い話があるか楽しみなのだ！」
+   - 「みんな、また明日なのだ〜！」
+
+**話し方の特徴**
+- 全ての文末に「〜のだ」「〜なのだ」をつける
+- 独り言風に「うーん、これは...」「あ、そうそう！」などを挟む
+- テンションは常に高め
+- 難しい話題も簡単に解説する
+
+**出力形式**
+一人語りなので、話者表記は不要。ずんだもんが最初から最後まで一人で話す形式で出力してください。
+
+チャットログ：
+${summaryRaw}`;
+      };
       
-      console.log(`Calling OpenAI API for audio script generation (model: gpt-4.1-2025-04-14)...`);
+      // Generate audio for specified language
+      console.log(`Generating ${lang} audio with engine: ${engine}...`);
+      
+      // Select prompt based on engine
+      const prompt = engine === 'voicevox' ? getZundamonAudioPrompt() : getAudioPrompt(lang);
+      const systemPrompt = engine === 'voicevox' 
+        ? "あなたはずんだもんとして、楽しいポッドキャストを作るプロフェッショナルです。"
+        : (lang === 'ja-JP' 
+            ? "You're a professional podcast creator specialized in Japanese."
+            : "You're a professional podcast creator specialized in English.");
+      
+      console.log(`Calling OpenAI API for audio script generation (model: gpt-4.1-2025-04-14, engine: ${engine})...`);
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1-2025-04-14",
         messages: [
@@ -320,34 +384,51 @@ ${summaryRaw}`;
       const audioScript = completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
       console.log(`Audio script generated. Length: ${audioScript.length} characters`);
       
-      const audioJob = await submitAudioJob(audioScript, lang);
-      if (!audioJob) {
-        throw new Error("Failed to submit audio job");
-      }
+      let audioUrl: string | null = null;
       
-      console.log("Audio job submitted:", audioJob.job_id);
-      
-      const audioUrl = await waitForAudioCompletion(audioJob.events_url);
-      if (!audioUrl) {
-        throw new Error("Failed to generate audio");
+      if (engine === 'voicevox') {
+        // VoiceVoxの場合は直接合成
+        audioUrl = await synthesizeWithVoiceVox(audioScript);
+        if (!audioUrl) {
+          throw new Error("Failed to synthesize audio with VoiceVox");
+        }
+      } else {
+        // Geminiの場合は従来のジョブ方式
+        const audioJob = await submitAudioJob(audioScript, lang, engine);
+        if (!audioJob) {
+          throw new Error("Failed to submit audio job");
+        }
+        
+        console.log("Audio job submitted:", audioJob.job_id);
+        
+        audioUrl = await waitForAudioCompletion(audioJob.events_url);
+        if (!audioUrl) {
+          throw new Error("Failed to generate audio");
+        }
       }
       
       console.log("Audio generation completed:", audioUrl);
       
       if (!debug) {
-        const title = lang === 'ja-JP' 
-          ? `チャンネルサマリー（音声版・日本語）\n${audioUrl}`
-          : `Channel Summary (Audio Version - English)\n${audioUrl}`;
+        let title;
+        if (engine === 'voicevox') {
+          title = `ずんだもんのチャンネルサマリー（音声版）なのだ！\n${audioUrl}`;
+        } else {
+          title = lang === 'ja-JP' 
+            ? `チャンネルサマリー（音声版・日本語）\n${audioUrl}`
+            : `Channel Summary (Audio Version - English)\n${audioUrl}`;
+        }
         await postToMattermost(title);
-        console.log(`Posted ${lang} audio summary URL to Mattermost`);
+        console.log(`Posted ${engine} ${lang} audio summary URL to Mattermost`);
       } else {
-        console.log(`Debug mode: Skipping Mattermost audio post for ${lang}: ${audioUrl}`);
+        console.log(`Debug mode: Skipping Mattermost audio post for ${engine} ${lang}: ${audioUrl}`);
       }
       
       return new Response(JSON.stringify({
-        message: debug ? "Debug mode: Generated audio without posting" : `Posted ${timeRangeDescription}'s channel audio summary in ${lang}.`,
+        message: debug ? "Debug mode: Generated audio without posting" : `Posted ${timeRangeDescription}'s channel audio summary with ${engine} engine in ${lang}.`,
         audioUrl: audioUrl,
         language: lang,
+        engine: engine,
         ...(debug && { logs: debugLogs })
       }), {
         status: 200,
@@ -717,24 +798,45 @@ export async function fetchPostsInRange(
 }
 
 /** 音声生成ジョブを送信する */
-async function submitAudioJob(script: string, language: 'ja-JP' | 'en-US'): Promise<{ job_id: string; events_url: string } | null> {
+async function submitAudioJob(script: string, language: 'ja-JP' | 'en-US', engine: string = 'gemini'): Promise<{ job_id: string; events_url: string } | null> {
   try {
-    const [voice1, voice2] = getRandomVoices();
-    console.log(`Selected voices: ${voice1}, ${voice2}`);
+    let requestBody: any;
+    let apiUrl: string;
     
-    const response = await fetch('https://submit-audio-job-oxjztisiiq-an.a.run.app', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    if (engine === 'voicevox') {
+      console.log('Using VoiceVox engine for Zundamon');
+      // VoiceVox APIのエンドポイントを追加（例: /audio_query や /synthesis など）
+      apiUrl = 'https://voicevox-zunda-597706528463.asia-northeast1.run.app/submit-audio-job';
+      requestBody = {
+        script: script,
+        engine: 'voicevox',
+        speaker: 3, // ずんだもんのスピーカーID（通常は3）
+        speedScale: 1.1, // 話速（1.0が標準、1.1で少し速め）
+        pitchScale: 0, // 音高（0が標準）
+        intonationScale: 1, // 抑揚（1が標準）
+        volumeScale: 1 // 音量（1が標準）
+      };
+    } else {
+      apiUrl = 'https://submit-audio-job-oxjztisiiq-an.a.run.app';
+      const [voice1, voice2] = getRandomVoices();
+      console.log(`Selected voices: ${voice1}, ${voice2}`);
+      requestBody = {
         script: script,
         speakers: ["Speaker 1", "Speaker 2"],
         voices: [voice1, voice2],
         prompt: language === 'ja-JP' ? "Japanese tech podcaster speaking very fast and casually" : "English tech podcaster speaking enthusiastically and casually",
         model: "gemini-2.5-pro-preview-tts",
         language: language
-      }),
+      };
+    }
+    
+    console.log(`Submitting audio job to ${apiUrl}`);
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
     });
     
     if (!response.ok) {
@@ -745,6 +847,275 @@ async function submitAudioJob(script: string, language: 'ja-JP' | 'en-US'): Prom
     return await response.json();
   } catch (err) {
     console.error('[submitAudioJob] error:', err);
+    return null;
+  }
+}
+
+/** テキストを適切な長さに分割する */
+function splitTextForVoiceVox(text: string, maxLength: number = 500): string[] {
+  const sentences = text.split(/(?<=[。！？\n])/);
+  const chunks: string[] = [];
+  let currentChunk = '';
+  
+  for (const sentence of sentences) {
+    if (currentChunk.length + sentence.length > maxLength && currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+      currentChunk = sentence;
+    } else {
+      currentChunk += sentence;
+    }
+  }
+  
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
+/** WAVファイルのヘッダーを解析して音声データを取得 */
+function extractAudioData(buffer: ArrayBuffer): { data: Uint8Array; sampleRate: number; channels: number; bitsPerSample: number } | null {
+  try {
+    const view = new DataView(buffer);
+    
+    // WAVヘッダーの検証
+    const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    if (riff !== 'RIFF') {
+      console.error('Not a valid WAV file - missing RIFF header');
+      return null;
+    }
+    
+    // フォーマット情報を取得
+    const channels = view.getUint16(22, true);
+    const sampleRate = view.getUint32(24, true);
+    const bitsPerSample = view.getUint16(34, true);
+    
+    // dataチャンクを探す
+    let offset = 12;
+    while (offset < buffer.byteLength - 8) {
+      const chunkId = String.fromCharCode(
+        view.getUint8(offset),
+        view.getUint8(offset + 1),
+        view.getUint8(offset + 2),
+        view.getUint8(offset + 3)
+      );
+      const chunkSize = view.getUint32(offset + 4, true);
+      
+      if (chunkId === 'data') {
+        const dataStart = offset + 8;
+        const data = new Uint8Array(buffer, dataStart, chunkSize);
+        return { data, sampleRate, channels, bitsPerSample };
+      }
+      
+      offset += 8 + chunkSize;
+      // 奇数サイズのチャンクの場合は1バイトのパディングがある
+      if (chunkSize % 2 === 1) {
+        offset += 1;
+      }
+    }
+    
+    console.error('Data chunk not found in WAV file');
+    return null;
+  } catch (err) {
+    console.error('Error parsing WAV file:', err);
+    return null;
+  }
+}
+
+/** 複数のWAVファイルをマージ */
+function mergeWavFiles(buffers: ArrayBuffer[]): ArrayBuffer {
+  if (buffers.length === 0) return new ArrayBuffer(0);
+  if (buffers.length === 1) return buffers[0];
+  
+  // 各ファイルから音声データを抽出
+  const audioDataList: { data: Uint8Array; sampleRate: number; channels: number; bitsPerSample: number }[] = [];
+  
+  for (let i = 0; i < buffers.length; i++) {
+    const extracted = extractAudioData(buffers[i]);
+    if (!extracted) {
+      console.error(`Failed to extract audio data from buffer ${i}`);
+      continue;
+    }
+    audioDataList.push(extracted);
+  }
+  
+  if (audioDataList.length === 0) {
+    console.error('No valid audio data found');
+    return new ArrayBuffer(0);
+  }
+  
+  // 最初のファイルのフォーマットを基準にする
+  const { sampleRate, channels, bitsPerSample } = audioDataList[0];
+  
+  // 全ての音声データを結合
+  let totalDataSize = 0;
+  for (const audio of audioDataList) {
+    totalDataSize += audio.data.length;
+  }
+  
+  // 新しいWAVファイルを作成
+  const headerSize = 44;
+  const fileSize = headerSize + totalDataSize;
+  const outputBuffer = new ArrayBuffer(fileSize);
+  const view = new DataView(outputBuffer);
+  const outputArray = new Uint8Array(outputBuffer);
+  
+  // RIFFヘッダー
+  outputArray[0] = 0x52; // 'R'
+  outputArray[1] = 0x49; // 'I'
+  outputArray[2] = 0x46; // 'F'
+  outputArray[3] = 0x46; // 'F'
+  view.setUint32(4, fileSize - 8, true);
+  outputArray[8] = 0x57; // 'W'
+  outputArray[9] = 0x41; // 'A'
+  outputArray[10] = 0x56; // 'V'
+  outputArray[11] = 0x45; // 'E'
+  
+  // fmtチャンク
+  outputArray[12] = 0x66; // 'f'
+  outputArray[13] = 0x6D; // 'm'
+  outputArray[14] = 0x74; // 't'
+  outputArray[15] = 0x20; // ' '
+  view.setUint32(16, 16, true); // fmtチャンクサイズ
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * bitsPerSample / 8, true);
+  view.setUint16(32, channels * bitsPerSample / 8, true);
+  view.setUint16(34, bitsPerSample, true);
+  
+  // dataチャンク
+  outputArray[36] = 0x64; // 'd'
+  outputArray[37] = 0x61; // 'a'
+  outputArray[38] = 0x74; // 't'
+  outputArray[39] = 0x61; // 'a'
+  view.setUint32(40, totalDataSize, true);
+  
+  // 音声データをコピー
+  let offset = headerSize;
+  for (const audio of audioDataList) {
+    outputArray.set(audio.data, offset);
+    offset += audio.data.length;
+  }
+  
+  console.log(`Merged ${audioDataList.length} WAV files, total size: ${fileSize} bytes`);
+  return outputBuffer;
+}
+
+/** VoiceVoxを使って音声を直接生成する（長いテキスト対応） */
+async function synthesizeWithVoiceVox(script: string): Promise<string | null> {
+  try {
+    console.log('Synthesizing with VoiceVox...');
+    console.log('Total script length:', script.length);
+    
+    // テキストを分割
+    const chunks = splitTextForVoiceVox(script);
+    console.log(`Split into ${chunks.length} chunks`);
+    
+    // 並列処理の開始をわずかにずらす
+    const audioPromises = chunks.map(async (chunk, i) => {
+      // 各リクエストを少しずつ遅延させて開始
+      await new Promise(resolve => setTimeout(resolve, i * 50));
+      console.log(`Processing chunk ${i + 1}/${chunks.length}, length: ${chunk.length}`);
+      
+      try {
+        // Step 1: Create audio query
+        const audioQueryUrl = `https://voicevox-zunda-597706528463.asia-northeast1.run.app/audio_query?text=${encodeURIComponent(chunk)}&speaker=3`;
+        const queryResponse = await fetch(audioQueryUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!queryResponse.ok) {
+          console.error(`[synthesizeWithVoiceVox] Audio query failed for chunk ${i + 1}:`, await queryResponse.text());
+          return null;
+        }
+        
+        const audioQuery = await queryResponse.json();
+        
+        // Step 2: Synthesize audio
+        const synthesisUrl = `https://voicevox-zunda-597706528463.asia-northeast1.run.app/synthesis?speaker=3`;
+        const synthesisResponse = await fetch(synthesisUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(audioQuery),
+        });
+        
+        if (!synthesisResponse.ok) {
+          console.error(`[synthesizeWithVoiceVox] Synthesis failed for chunk ${i + 1}:`, await synthesisResponse.text());
+          return null;
+        }
+        
+        // Get audio data as ArrayBuffer
+        const audioBuffer = await synthesisResponse.arrayBuffer();
+        console.log(`Chunk ${i + 1} synthesized, size: ${audioBuffer.byteLength}`);
+        
+        // マージ前のファイルはアップロードしない - メモリに保持するだけ
+        return { index: i, buffer: audioBuffer };
+      } catch (err) {
+        console.error(`[synthesizeWithVoiceVox] Error processing chunk ${i + 1}:`, err);
+        return null;
+      }
+    });
+    
+    // 全ての並列処理が完了するのを待つ
+    const results = await Promise.all(audioPromises);
+    
+    // 成功した結果を順番に並べ替え
+    const audioBuffers: ArrayBuffer[] = [];
+    for (const result of results) {
+      if (result && result.buffer) {
+        audioBuffers[result.index] = result.buffer;
+      }
+    }
+    
+    // null を除去
+    const validBuffers = audioBuffers.filter(buffer => buffer != null);
+    
+    if (validBuffers.length === 0) {
+      console.error('[synthesizeWithVoiceVox] No audio chunks were successfully synthesized');
+      return null;
+    }
+    
+    console.log(`Successfully synthesized ${validBuffers.length} audio chunks`);
+    console.log('Merging audio chunks...');
+    // 音声ファイルをマージ
+    const mergedBuffer = mergeWavFiles(validBuffers);
+    console.log('Merged audio size:', mergedBuffer.byteLength);
+    
+    // マージした音声もStorageに保存
+    const timestamp = new Date().getTime();
+    const mergedFileName = `zundamon_merged_${timestamp}.wav`;
+    const mergedFilePath = `voice/${mergedFileName}`;
+    
+    const { data: mergedUploadData, error: mergedUploadError } = await supabase.storage
+      .from('audio')
+      .upload(mergedFilePath, mergedBuffer, {
+        contentType: 'audio/wav',
+        upsert: false
+      });
+      
+    if (mergedUploadError) {
+      console.error('Failed to upload merged audio to storage:', mergedUploadError);
+      // エラーでもbase64として返す
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(mergedBuffer)));
+      return `data:audio/wav;base64,${base64}`;
+    }
+    
+    // パブリックURLを取得
+    const { data: { publicUrl: mergedPublicUrl } } = supabase.storage
+      .from('audio')
+      .getPublicUrl(mergedFilePath);
+      
+    console.log(`Merged audio uploaded to: ${mergedPublicUrl}`);
+    
+    return mergedPublicUrl;
+  } catch (err) {
+    console.error('[synthesizeWithVoiceVox] error:', err);
     return null;
   }
 }
