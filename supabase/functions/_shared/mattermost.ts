@@ -7,8 +7,7 @@ const MATTERMOST_HOST = Deno.env.get("MATTERMOST_URL") ?? ""
 
 // メンターグループ: r3a1ho64b7ghfdogr3xyrw9gya
 
-const MENTOR_GROUP_ID = 'r3a1ho64b7ghfdogr3xyrw9gya'
-//const MENTOR_GROUP_ID = '3eia1uggojy4pf64nf9apcr6rr'
+const MENTOR_GROUP_ID = Deno.env.get('MATTERMOST_MENTOR_GROUP_ID') ?? 'r3a1ho64b7ghfdogr3xyrw9gya'
 
 // Mattermost API (token 認証) でメンター一覧を取得する関数
 export async function getMentors(): Promise<{id: string; username: string}[]> {

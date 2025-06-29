@@ -809,7 +809,7 @@ async function submitAudioJob(script: string, language: 'ja-JP' | 'en-US', engin
     if (engine === 'voicevox') {
       console.log('Using VoiceVox engine for Zundamon');
       // VoiceVox APIのエンドポイントを追加（例: /audio_query や /synthesis など）
-      apiUrl = 'https://voicevox-zunda-597706528463.asia-northeast1.run.app/submit-audio-job';
+      apiUrl = `${Deno.env.get('VOICEVOX_API_URL')}/submit-audio-job`;
       requestBody = {
         script: script,
         engine: 'voicevox',
@@ -820,7 +820,7 @@ async function submitAudioJob(script: string, language: 'ja-JP' | 'en-US', engin
         volumeScale: 1 // 音量（1が標準）
       };
     } else {
-      apiUrl = 'https://submit-audio-job-oxjztisiiq-an.a.run.app';
+      apiUrl = Deno.env.get('AUDIO_JOB_API_URL') || '';
       const [voice1, voice2] = getRandomVoices();
       console.log(`Selected voices: ${voice1}, ${voice2}`);
       requestBody = {
@@ -1023,7 +1023,7 @@ async function synthesizeWithVoiceVox(script: string): Promise<string | null> {
       
       try {
         // Step 1: Create audio query
-        const audioQueryUrl = `https://voicevox-zunda-597706528463.asia-northeast1.run.app/audio_query?text=${encodeURIComponent(chunk)}&speaker=3`;
+        const audioQueryUrl = `${Deno.env.get('VOICEVOX_API_URL')}/audio_query?text=${encodeURIComponent(chunk)}&speaker=3`;
         const queryResponse = await fetch(audioQueryUrl, {
           method: 'POST',
           headers: {
@@ -1045,7 +1045,7 @@ async function synthesizeWithVoiceVox(script: string): Promise<string | null> {
         audioQuery.volumeScale = 1;        // 音量は標準
         
         // Step 2: Synthesize audio
-        const synthesisUrl = `https://voicevox-zunda-597706528463.asia-northeast1.run.app/synthesis?speaker=3`;
+        const synthesisUrl = `${Deno.env.get('VOICEVOX_API_URL')}/synthesis?speaker=3`;
         const synthesisResponse = await fetch(synthesisUrl, {
           method: 'POST',
           headers: {
