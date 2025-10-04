@@ -442,10 +442,30 @@ ${summaryRaw}`;
     } else {
       // テキスト生成処理（既存の処理）
       console.log("Preparing OpenAI summarization prompt...");
+
+      // 2025年11月3日までの残り時間を計算
+      const eventDate = new Date('2025-11-03T00:00:00+09:00'); // JST
+      const now = new Date();
+      const diffMs = eventDate.getTime() - now.getTime();
+
+      const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const hoursRemaining = Math.floor(diffMs / (1000 * 60 * 60));
+      const minutesRemaining = Math.floor(diffMs / (1000 * 60));
+      const secondsRemaining = Math.floor(diffMs / 1000);
+
       const promptUser = `ずんだもんとして、${timeRangeDescription}のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
-      
+
       ** ステップ **
       1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
+
+      2025年11月3日に未踏ジュニア成果報告会が開催されるまでの残り時間を、クリエイティブな形式で伝えてください。
+      - 残り日数: ${daysRemaining}日
+      - 残り時間: ${hoursRemaining}時間
+      - 残り分数: ${minutesRemaining}分
+      - 残り秒数: ${secondsRemaining}秒
+      - それぞれの単位に面白い比喩を加える（例：「カップラーメンをX個作る時間」「東京〜大阪をX往復する時間」「アニメをX話見られる時間」など）
+      - ずんだもんらしく元気で面白い表現にする
+
       2. 続いて、更新があったチャンネルごとに、誰からどのような投稿があったのかを絵文字も使ってポップにまとめて。
       - 決して、すべての投稿を羅列しないでください。(e.g. XXXがYYYと言った、の羅列)
       - もし、チャンネルに「が入室しました」のような誰かが入室したことを示すシステムメッセージの投稿しかなかった場合は、チャンネル自体をまとめに含めないでください。
