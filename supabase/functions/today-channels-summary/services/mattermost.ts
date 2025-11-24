@@ -33,17 +33,23 @@ export async function fetchPublicChannels(
   }
 }
 
-export async function postToMattermost(message: string): Promise<void> {
+export async function postToMattermost(
+  message: string,
+  fileIds?: string[],
+): Promise<void> {
   if (!MATTERMOST_SUMMARY_CHANNEL) {
     console.warn("MATTERMOST_SUMMARY_CHANNEL is not set. Skipping post.");
     return;
   }
 
   const url = `${MATTERMOST_URL}/api/v4/posts`;
-  const body = {
+  const body: Record<string, unknown> = {
     channel_id: MATTERMOST_SUMMARY_CHANNEL,
     message,
   };
+  if (fileIds && fileIds.length > 0) {
+    body.file_ids = fileIds;
+  }
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -186,8 +192,9 @@ export async function fetchPostsInRange(
 
         try {
           console.log(`Fetching reactions for post: ${p.id}`);
-          const reactions = await getReactions(p.id);
-          if (reactions.length > 0) {
+          // getReactions should return an array, but guard against null/undefined
+          const reactions = (await getReactions(p.id)) ?? [];
+          if (Array.isArray(reactions) && reactions.length > 0) {
             const reactionStrings: string[] = [];
             for (const r of reactions) {
               const userName = await fetchUserName(r.user_id);
@@ -212,6 +219,73 @@ export async function fetchPostsInRange(
     console.error("[fetchPostsInRange] error:", err);
     return [];
   }
+}
+
+async function uploadFileToMattermost(
+  channelId: string,
+  fileName: string,
+  fileBytes: Uint8Array,
+  mimeType = "image/png",
+): Promise<string> {
+  const url = `${MATTERMOST_URL}/api/v4/files`;
+  const formData = new FormData();
+  formData.append("channel_id", channelId);
+  formData.append(
+    "files",
+    new Blob([fileBytes], { type: mimeType }),
+    fileName,
+  );
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MATTERMOST_BOT_TOKEN}`,
+      Accept: "application/json",
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("[uploadFileToMattermost] failed", errText);
+    throw new Error(`Failed to upload file to Mattermost: ${errText}`);
+  }
+
+  const data = await res.json();
+  const fileId =
+    data?.file_infos?.[0]?.id ??
+      (Array.isArray(data?.file_ids) ? data.file_ids[0] : data?.id);
+
+  if (!fileId) {
+    console.error("[uploadFileToMattermost] unexpected response", data);
+    throw new Error("Failed to retrieve file_id from Mattermost upload");
+  }
+
+  return fileId;
+}
+
+export async function postMessageWithImage(
+  message: string,
+  imageBytes: Uint8Array,
+  options?: { fileName?: string; mimeType?: string; altText?: string },
+): Promise<void> {
+  if (!MATTERMOST_SUMMARY_CHANNEL) {
+    console.warn("MATTERMOST_SUMMARY_CHANNEL is not set. Skipping post.");
+    return;
+  }
+
+  const fileId = await uploadFileToMattermost(
+    MATTERMOST_SUMMARY_CHANNEL,
+    options?.fileName ?? "channel-summary.png",
+    imageBytes,
+    options?.mimeType ?? "image/png",
+  );
+
+  const finalMessage = options?.altText
+    ? `${message}\n\n(画像の説明: ${options.altText})`
+    : message;
+
+  await postToMattermost(finalMessage, [fileId]);
 }
 
 export { MATTERMOST_URL, MATTERMOST_SUMMARY_CHANNEL };

@@ -6,10 +6,12 @@ import {
   fetchUserName,
   formatChannelLink,
   postToMattermost,
+  postMessageWithImage,
   MATTERMOST_SUMMARY_CHANNEL,
 } from "./services/mattermost.ts";
 import { generateTextSummary } from "./services/summarizer.ts";
 import { generateAudioSummary } from "./services/audio.ts";
+import { generateSummaryImage, type SummaryImage } from "./services/vision.ts";
 import {
   getDebugLogs,
   restoreConsole,
@@ -35,9 +37,8 @@ async function handler(c: any) {
   setupDebugLogging(debug);
 
   try {
-    const { startTimeUTC, endTimeUTC, timeRangeDescription } = getTimeRange(
-      forToday,
-    );
+    const { startTimeUTC, endTimeUTC, timeRangeDescription, dateLabelJST } =
+      getTimeRange(forToday);
     console.log(
       `Request parameters: debug=${debug}, forToday=${forToday}, type=${type}, lang=${lang}, engine=${engine}`,
     );
@@ -111,8 +112,39 @@ async function handler(c: any) {
     } else {
       const gptText = await generateTextSummary(summaryRaw, timeRangeDescription);
 
+      let imageResult: SummaryImage | null = null;
+      try {
+        console.log("Attempting Gemini image generation for summary");
+        imageResult = await generateSummaryImage(
+          gptText,
+          timeRangeDescription,
+          dateLabelJST,
+        );
+        if (imageResult?.imageBytes) {
+          console.log(
+            "Generated summary image",
+            {
+              byteLength: imageResult.imageBytes.length,
+              altTextPreview: imageResult.altText?.slice(0, 80) ?? "",
+            },
+          );
+        } else {
+          console.log("Gemini returned no image; will fall back to text only.");
+        }
+      } catch (imageErr) {
+        console.error("Failed to generate image with Gemini:", imageErr);
+      }
+
       if (!debug) {
-        await postTextSummary(gptText);
+        if (imageResult?.imageBytes) {
+          await postMessageWithImage(gptText, imageResult.imageBytes, {
+            altText: imageResult.altText,
+          });
+          console.log("Posted summary with image to Mattermost");
+        } else {
+          await postTextSummary(gptText);
+          console.log("Posted text-only summary to Mattermost");
+        }
       }
 
       return c.json({
@@ -120,7 +152,16 @@ async function handler(c: any) {
           ? "Debug mode: Generated summary without posting"
           : `Posted ${timeRangeDescription}'s channel summary.`,
         summary: gptText,
-        ...(debug && { logs: getDebugLogs() }),
+        ...(debug && {
+          image: imageResult
+            ? {
+              hasImage: true,
+              altText: imageResult.altText,
+              byteLength: imageResult.imageBytes.length,
+            }
+            : { hasImage: false },
+          logs: getDebugLogs(),
+        }),
       });
     }
   } catch (err) {
@@ -166,8 +207,18 @@ function getTimeRange(forToday: boolean) {
   const startTimeUTC = forToday ? endOfYesterdayUTC : startOfYesterdayUTC;
   const endTimeUTC = forToday ? Date.now() : endOfYesterdayUTC;
   const timeRangeDescription = forToday ? "今日" : "昨日";
+  const dateLabelJST = forToday
+    ? formatDateJST(startOfTodayJST)
+    : formatDateJST(startOfYesterdayJST);
 
-  return { startTimeUTC, endTimeUTC, timeRangeDescription };
+  return { startTimeUTC, endTimeUTC, timeRangeDescription, dateLabelJST };
+}
+
+function formatDateJST(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = `${date.getMonth() + 1}`.padStart(2, "0");
+  const dd = `${date.getDate()}`.padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} (JST)`;
 }
 
 function removeMentions(text: string): string {
