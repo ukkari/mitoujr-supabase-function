@@ -36,7 +36,7 @@ export async function generateSummaryImage(
   );
 
   const prompt =
-    `Create detailed complex slide image that reflects the Mitou Jr channel updates for ${dateLabelJST} in Japanese. Please keep the user name and channel name as-is. Use the attached reference image of ずんだもん for style and character. Create dedicated column spaces for interesting and unique topics. Make it cute and visual heavy. Use emojis,illustrations and diagrams as much as possible instead of text. Base the visuals on this summary:\n${trimmedSummary}`;
+    `Create detailed complex slide image that reflects the Mitou Jr channel updates for ${dateLabelJST} in Japanese. Please keep the user name and channel name as-is. Use the attached reference image of ずんだもん for style and character. Create dedicated column spaces for interesting and unique topics. Make it cute and visual heavy. Use emojis,illustrations and diagrams as much as possible instead of text. Text like ":kusa:" are emojis defined in mattermost which you don't have access. Don't directly use :hoge: so create alternative illustration or ignore if you don't understand. Base the visuals on this summary:\n${trimmedSummary}`;
 
   const parts: any[] = [{ text: prompt }];
 
