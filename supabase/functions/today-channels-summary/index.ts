@@ -51,12 +51,38 @@ async function handler(c: any) {
       return c.json({ error: "Failed to fetch channels" }, 500);
     }
 
+    if (debug) {
+      console.log(
+        `[debug] fetched channels (${channels.length} total):`,
+        channels.map((ch: any) => ({
+          id: ch.id,
+          name: ch.name,
+          display_name: ch.display_name,
+          type: ch.type,
+          last_post_at: ch.last_post_at,
+        })),
+      );
+    }
+
     const updatedChannels = channels.filter((ch) =>
       ch.type === "O" &&
       ch.last_post_at >= startTimeUTC &&
       ch.id !== MATTERMOST_SUMMARY_CHANNEL &&
       !ch.display_name.toLowerCase().includes("notification")
     );
+
+    if (debug) {
+      console.log(
+        `[debug] channels after filter (${updatedChannels.length} total):`,
+        updatedChannels.map((ch: any) => ({
+          id: ch.id,
+          name: ch.name,
+          display_name: ch.display_name,
+          type: ch.type,
+          last_post_at: ch.last_post_at,
+        })),
+      );
+    }
 
     console.log(
       `Channels updated ${timeRangeDescription}: ${updatedChannels.length}`,

@@ -15,18 +15,37 @@ export async function fetchPublicChannels(
   teamId: string,
 ): Promise<any[] | null> {
   try {
-    const url = `${MATTERMOST_URL}/api/v4/teams/${teamId}/channels?per_page=200`;
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${MATTERMOST_BOT_TOKEN}`,
-        Accept: "application/json",
-      },
-    });
-    if (!res.ok) {
-      console.error("[fetchPublicChannels] failed", await res.text());
-      return null;
+    const perPage = 200; // Mattermost max
+    let page = 0;
+    const all: any[] = [];
+
+    while (true) {
+      const url =
+        `${MATTERMOST_URL}/api/v4/teams/${teamId}/channels?per_page=${perPage}&page=${page}`;
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${MATTERMOST_BOT_TOKEN}`,
+          Accept: "application/json",
+        },
+      });
+      if (!res.ok) {
+        console.error("[fetchPublicChannels] failed", await res.text());
+        return null;
+      }
+
+      const data = await res.json();
+      all.push(...data);
+
+      if (!Array.isArray(data) || data.length < perPage) break;
+
+      page++;
+      if (page > 50) {
+        console.warn("[fetchPublicChannels] hit page guard; stopping at 50 pages");
+        break;
+      }
     }
-    return await res.json();
+
+    return all;
   } catch (err) {
     console.error("[fetchPublicChannels] error:", err);
     return null;
@@ -150,7 +169,7 @@ export async function fetchPostsInRange(
     }
 
     const url =
-      `${MATTERMOST_URL}/api/v4/channels/${channelId}/posts?per_page=200`;
+      `${MATTERMOST_URL}/api/v4/channels/${channelId}/posts?per_page=500`;
     const res = await fetch(url, {
       headers: {
         Authorization: `Bearer ${MATTERMOST_BOT_TOKEN}`,
