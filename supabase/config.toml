@@ -279,3 +279,6 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.today-channels-summary]
 verify_jwt = false
+
+[functions.slash-reminder-mentors]
+verify_jwt = false
