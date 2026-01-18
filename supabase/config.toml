@@ -282,3 +282,9 @@ verify_jwt = false
 
 [functions.slash-reminder-mentors]
 verify_jwt = false
+
+[functions.reminder-cron]
+verify_jwt = false
+
+[functions.slash-reminder]
+verify_jwt = false

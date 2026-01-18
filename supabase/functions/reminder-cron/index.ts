@@ -2,7 +2,31 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts"
 import { corsHeaders } from "../_shared/cors.ts"
-import { getMentors, getReactions, postReply } from "../_shared/mattermost.ts"
+import { getMentors, getPost, getReactions, getThreadPostIds, getUsersByUsernames, postReply } from "../_shared/mattermost.ts"
+
+type ParsedReminderContent = {
+  body: string | null
+  targetUsernames: string[] | null
+}
+
+function parseReminderContent(raw: unknown): ParsedReminderContent {
+  if (typeof raw !== 'string') {
+    return { body: null, targetUsernames: null }
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      const body = typeof parsed.body === 'string' ? parsed.body : raw
+      const targetUsernames = Array.isArray(parsed.target_usernames)
+        ? parsed.target_usernames.map((u: string) => u.toString())
+        : null
+      return { body, targetUsernames }
+    }
+  } catch {
+    // fallback to plain text content
+  }
+  return { body: raw, targetUsernames: null }
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -34,28 +58,74 @@ serve(async (req) => {
 
     for (const r of reminders) {
       const { post_id: postId, channel_id: channelId, due_date: dueDateStr } = r
+      const { post: rootPost, notFound } = await getPost(postId)
+      const isDeleted = notFound || (typeof rootPost?.delete_at === 'number' && rootPost.delete_at > 0)
+      if (isDeleted) {
+        const { error: compError } = await supabaseAdmin
+          .from('reminders')
+          .update({ completed: true })
+          .eq('post_id', postId)
+        if (compError) {
+          console.error('Error updating completed for deleted post:', compError)
+        }
+        continue
+      }
+      if (!rootPost) {
+        console.error('Failed to fetch root post. Skipping reminder:', postId)
+        continue
+      }
       // 期限日
       const dueDate = new Date(dueDateStr)
       // 残り日数 (当日=0, 過去なら負値)
       const diff = dueDate.getTime() - now.getTime()
       const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24))
 
-      // まず "done" リアクションのついている user_id を取得
-      let reactions = await getReactions(postId)
-      // null や undefined なら空配列にする => エラー回避
-      if (!reactions) {
-        reactions = []
+      // スレッド内 (root + replies) の "done" リアクションを集計
+      const threadPostIds = await getThreadPostIds(postId)
+      const doneUserIdsSet = new Set<string>()
+      for (const pid of threadPostIds) {
+        let reactions = await getReactions(pid)
+        if (!reactions) {
+          reactions = []
+        }
+        for (const r of reactions) {
+          if (r.emoji_name === 'done') {
+            doneUserIdsSet.add(r.user_id)
+          }
+        }
+      }
+      const doneUserIds = Array.from(doneUserIdsSet)
+
+      const { targetUsernames } = parseReminderContent(r?.content)
+      const normalizedTargets = Array.isArray(r?.target_usernames)
+        ? r.target_usernames.map((u: string) => u.toString())
+        : targetUsernames
+
+      let missingMentions: string[] = []
+      let hasPending = false
+
+      if (normalizedTargets && normalizedTargets.length > 0) {
+        const targetUsers = await getUsersByUsernames(normalizedTargets)
+        const foundNameSet = new Set(targetUsers.map((u) => u.username))
+        const cleanedTargets = Array.from(new Set(
+          normalizedTargets.map((u) => u.replace(/^@/, '').trim()).filter((u) => u.length > 0)
+        ))
+        const unknownUsernames = cleanedTargets.filter((u) => !foundNameSet.has(u))
+        const missingTargets = targetUsers.filter((u) => !doneUserIdsSet.has(u.id))
+        hasPending = missingTargets.length > 0 || unknownUsernames.length > 0
+        missingMentions = [
+          ...missingTargets.map((u) => `@${u.username}`),
+          ...unknownUsernames.map((u) => `@${u}`)
+        ]
+      } else {
+        // missing (まだ"done"を付けていないメンター)
+        const missing = mentors.filter(m => !doneUserIds.includes(m.id))
+        hasPending = missing.length > 0
+        missingMentions = missing.map((m) => `@${m.username}`)
       }
 
-      const doneUserIds = reactions
-        .filter((r: any) => r.emoji_name === 'done')
-        .map((r: any) => r.user_id)
-
-      // missing (まだ"done"を付けていないメンター)
-      const missing = mentors.filter(m => !doneUserIds.includes(m.id))
-
       // 全員が完了なら completed = true に更新して、これ以上リマインド不要
-      if (missing.length === 0) {
+      if (!hasPending) {
         // DB更新
         const { error: compError } = await supabaseAdmin
           .from('reminders')
@@ -78,20 +148,20 @@ serve(async (req) => {
         remindDays.includes(diffDays) || diffDays <= 0
 
       if (shouldRemind) {
-        // missing メンターを mention してリマインド
-        const mentionText = missing.map(m => `@${m.username}`).join(' ')
+        // missing 対象者を mention してリマインド
+        const mentionText = missingMentions.join(' ')
         // diffDays <= 0 の場合は期限を過ぎている
         if (diffDays < 0) {
           const overdueDays = Math.abs(diffDays) // 期限から何日経過
-          const replyMessage = `締切日 (${dueDateStr}) を${overdueDays}日過ぎています。まだ "done" がついていないメンター: ${mentionText}`
+          const replyMessage = `締切日 (${dueDateStr}) を${overdueDays}日過ぎています。まだ "done" がついていない対象者: ${mentionText}`
           await postReply(channelId, postId, replyMessage)
         } else if (diffDays === 0) {
           // 期限当日
-          const replyMessage = `今日は締切日 (${dueDateStr}) です！まだ "done" がついていないメンター: ${mentionText}`
+          const replyMessage = `今日は締切日 (${dueDateStr}) です！まだ "done" がついていない対象者: ${mentionText}`
           await postReply(channelId, postId, replyMessage)
         } else {
           // 事前リマインド (7,5,3,2,1日前)
-          const replyMessage = `締切日 (${dueDateStr}) まであと ${diffDays}日です！まだ "done" がついていないメンター: ${mentionText}`
+          const replyMessage = `締切日 (${dueDateStr}) まであと ${diffDays}日です！まだ "done" がついていない対象者: ${mentionText}`
           await postReply(channelId, postId, replyMessage)
         }
       }
