@@ -89,7 +89,7 @@ serve(async (req) => {
           reactions = []
         }
         for (const r of reactions) {
-          if (r.emoji_name === 'done') {
+          if (r.emoji_name === 'done' || r.emoji_name === 'white_check_mark' || r.emoji_name === 'heavy_check_mark') {
             doneUserIdsSet.add(r.user_id)
           }
         }
