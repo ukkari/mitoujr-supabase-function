@@ -248,3 +248,35 @@ export async function createPost(channelId: string, message: string) {
     }
     return await res.json() // { id, channel_id, message, ... }
   }
+
+/**
+ * 既存ポストを更新する
+ * @param postId
+ * @param channelId
+ * @param message
+ * @returns
+ */
+export async function updatePost(postId: string, channelId: string, message: string) {
+  const url = `${MATTERMOST_HOST}/api/v4/posts/${postId}`
+  const body = {
+    id: postId,
+    channel_id: channelId,
+    message,
+  }
+
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${MATTERMOST_TOKEN}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    console.error("Failed to update post:", await res.text())
+    return null
+  }
+  return await res.json()
+}
