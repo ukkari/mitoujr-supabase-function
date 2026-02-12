@@ -19,3 +19,4 @@ supabase/.temp/
 repomix-output.txt
 
 main.http
+.DS_Store
