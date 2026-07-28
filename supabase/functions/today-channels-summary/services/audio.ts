@@ -1,4 +1,4 @@
-import OpenAI from "https://deno.land/x/openai@v4.69.0/mod.ts";
+import OpenAI from "npm:openai@7.0.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { mergeWavFiles } from "../utils/wav-helper.ts";
 
@@ -143,12 +143,16 @@ function getAudioPrompt(
       ? 'natural in Japanese like "のチャンネル" "さんによると"'
       : 'natural in English like "in the X channel" "according to X"',
     analogy: isJapanese ? "まるで XXX みたい！" : "It's like XXX!",
-    validation: isJapanese ? "いやー、わかってますね" : "wow, you really get it",
+    validation: isJapanese
+      ? "いやー、わかってますね"
+      : "wow, you really get it",
     audience: isJapanese
       ? "今聞いている未踏ジュニアのみなさんも"
       : "For those of you listening from Mitou Junior",
     summarize: isJapanese ? "まとめると" : "to sum it up",
-    wrapUp: isJapanese ? "そろそろ時間なんですが" : "We're running out of time, but",
+    wrapUp: isJapanese
+      ? "そろそろ時間なんですが"
+      : "We're running out of time, but",
     transition: isJapanese ? "じゃあ" : "so",
     encourage: isJapanese
       ? "未踏ジュニアのコミュニティを一緒に盛り上げていきましょう"
@@ -162,7 +166,9 @@ function getAudioPrompt(
     speaker2: isJapanese
       ? "いや〜、今日も始まりましたね！"
       : "Oh wow, here we go again!",
-    community: isJapanese ? "未踏ジュニアコミュニティ" : "Mitou Junior Community",
+    community: isJapanese
+      ? "未踏ジュニアコミュニティ"
+      : "Mitou Junior Community",
     projectName: isJapanese ? "未踏ジュニア" : "Mitou Junior",
   };
 
@@ -343,8 +349,10 @@ function splitTextForVoiceVox(text: string, maxLength = 500): string[] {
   let currentChunk = "";
 
   for (const sentence of sentences) {
-    if (currentChunk.length + sentence.length > maxLength &&
-      currentChunk.length > 0) {
+    if (
+      currentChunk.length + sentence.length > maxLength &&
+      currentChunk.length > 0
+    ) {
       chunks.push(currentChunk.trim());
       currentChunk = sentence;
     } else {
@@ -376,8 +384,9 @@ async function synthesizeWithVoiceVox(
       );
 
       try {
-        const audioQueryUrl =
-          `${VOICEVOX_API_URL}/audio_query?text=${encodeURIComponent(chunk)}&speaker=3`;
+        const audioQueryUrl = `${VOICEVOX_API_URL}/audio_query?text=${
+          encodeURIComponent(chunk)
+        }&speaker=3`;
         const queryResponse = await fetch(audioQueryUrl, {
           method: "POST",
           headers: {
@@ -463,7 +472,10 @@ async function synthesizeWithVoiceVox(
       });
 
     if (mergedUploadError) {
-      console.error("Failed to upload merged audio to storage:", mergedUploadError);
+      console.error(
+        "Failed to upload merged audio to storage:",
+        mergedUploadError,
+      );
       const base64 = btoa(String.fromCharCode(...new Uint8Array(mergedBuffer)));
       return `data:audio/wav;base64,${base64}`;
     }
@@ -480,7 +492,9 @@ async function synthesizeWithVoiceVox(
   }
 }
 
-async function waitForAudioCompletion(eventsUrl: string): Promise<string | null> {
+async function waitForAudioCompletion(
+  eventsUrl: string,
+): Promise<string | null> {
   try {
     console.log("Connecting to SSE:", eventsUrl);
 
@@ -512,7 +526,10 @@ async function waitForAudioCompletion(eventsUrl: string): Promise<string | null>
           const data = JSON.parse(line.slice(6));
           console.log("SSE update:", data);
 
-          if (data.url && (data.status === "waiting" || data.status === "completed")) {
+          if (
+            data.url &&
+            (data.status === "waiting" || data.status === "completed")
+          ) {
             reader.releaseLock();
             return data.url;
           } else if (data.status === "error" || data.status === "timeout") {

@@ -1,6 +1,7 @@
-import OpenAI from "https://deno.land/x/openai@v4.69.0/mod.ts";
+import OpenAI from "npm:openai@7.0.0";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+const OPENAI_MODEL = "gpt-5.6-luna";
 
 const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
@@ -12,7 +13,8 @@ export async function generateTextSummary(
 ): Promise<string> {
   const countdown = calculateCountdown();
 
-  const promptUser = `ずんだもんとして、${timeRangeDescription}のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
+  const promptUser =
+    `ずんだもんとして、${timeRangeDescription}のMattermost投稿について、全体の概要のあとに、チャンネルごとにまとめてください。(入室メッセージしかなかったチャンネルを除く)
 
 ** ステップ **
 1. 全体の投稿概要を最初にまとめて表示してください。読む人がワクワクするように、絵文字も含めて、プロとして面白いまとめにしてください。
@@ -44,8 +46,17 @@ export async function generateTextSummary(
 
 ${summaryRaw}`;
 
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not set");
+  }
+
+  console.log(
+    `Calling OpenAI API for text summary (model: ${OPENAI_MODEL}, reasoning_effort: none)...`,
+  );
+
   const completion = await openai.chat.completions.create({
-    model: "gpt-5-chat-latest",
+    model: OPENAI_MODEL,
+    reasoning_effort: "none",
     messages: [
       {
         role: "system",
@@ -56,7 +67,16 @@ ${summaryRaw}`;
     ],
   });
 
-  return completion.choices[0]?.message?.content ?? "(No response from OpenAI)";
+  const summary = completion.choices[0]?.message?.content?.trim();
+  if (!summary) {
+    throw new Error("No response from OpenAI");
+  }
+
+  console.log(
+    `OpenAI text summary generated (model: ${OPENAI_MODEL}, length: ${summary.length})`,
+  );
+
+  return summary;
 }
 
 function calculateCountdown() {

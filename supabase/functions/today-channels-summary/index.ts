@@ -5,9 +5,9 @@ import {
   fetchPublicChannels,
   fetchUserName,
   formatChannelLink,
-  postToMattermost,
-  postMessageWithImage,
   MATTERMOST_SUMMARY_CHANNEL,
+  postMessageWithImage,
+  postToMattermost,
 } from "./services/mattermost.ts";
 import { generateTextSummary } from "./services/summarizer.ts";
 import { generateAudioSummary } from "./services/audio.ts";
@@ -43,7 +43,9 @@ async function handler(c: any) {
       `Request parameters: debug=${debug}, forToday=${forToday}, type=${type}, lang=${lang}, engine=${engine}`,
     );
     console.log(
-      `Time range: ${new Date(startTimeUTC).toISOString()} to ${new Date(endTimeUTC).toISOString()}`,
+      `Time range: ${new Date(startTimeUTC).toISOString()} to ${
+        new Date(endTimeUTC).toISOString()
+      }`,
     );
 
     const channels = await fetchPublicChannels(MATTERMOST_MAIN_TEAM);
@@ -99,7 +101,9 @@ async function handler(c: any) {
 
       if (posts.length === 0) continue;
 
-      summaryRaw += `\n【チャンネル】${formatChannelLink(ch.display_name, ch.name)}\n`;
+      summaryRaw += `\n【チャンネル】${
+        formatChannelLink(ch.display_name, ch.name)
+      }\n`;
       for (const p of posts) {
         const cleanMessage = removeMentions(p.message);
         const userName = await fetchUserName(p.user_id);
@@ -136,11 +140,14 @@ async function handler(c: any) {
         ...(debug && { logs: getDebugLogs(), script }),
       });
     } else {
-      const gptText = await generateTextSummary(summaryRaw, timeRangeDescription);
+      const gptText = await generateTextSummary(
+        summaryRaw,
+        timeRangeDescription,
+      );
 
       let imageResult: SummaryImage | null = null;
       try {
-        console.log("Attempting Gemini image generation for summary");
+        console.log("Attempting OpenAI image generation for summary");
         imageResult = await generateSummaryImage(
           gptText,
           timeRangeDescription,
@@ -155,10 +162,10 @@ async function handler(c: any) {
             },
           );
         } else {
-          console.log("Gemini returned no image; will fall back to text only.");
+          console.log("OpenAI returned no image; will fall back to text only.");
         }
       } catch (imageErr) {
-        console.error("Failed to generate image with Gemini:", imageErr);
+        console.error("Failed to generate image with OpenAI:", imageErr);
       }
 
       if (!debug) {

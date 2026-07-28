@@ -1,13 +1,13 @@
-import { GoogleGenAI } from "npm:@google/genai";
+import OpenAI, { toFile } from "npm:openai@7.0.0";
 import { ZUNDA_BASE64 } from "../assets/zunda-base64.ts";
 
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+const OPENAI_IMAGE_MODEL = "gpt-image-2";
+const OPENAI_IMAGE_SIZE = "1792x1008";
 
-const aiClient = GEMINI_API_KEY
-  ? new GoogleGenAI({
-    apiKey: GEMINI_API_KEY,
-  })
-  : null;
+const openai = new OpenAI({
+  apiKey: OPENAI_API_KEY,
+});
 
 export type SummaryImage = {
   imageBytes: Uint8Array;
@@ -19,9 +19,9 @@ export async function generateSummaryImage(
   timeRangeDescription: string,
   dateLabelJST: string,
 ): Promise<SummaryImage | null> {
-  if (!aiClient) {
+  if (!OPENAI_API_KEY) {
     console.warn(
-      "GEMINI_API_KEY is not set. Skipping image generation.",
+      "OPENAI_API_KEY is not set. Skipping image generation.",
     );
     return null;
   }
@@ -31,76 +31,67 @@ export async function generateSummaryImage(
     : summary;
 
   console.log(
-    "Gemini: start image generation",
-    { timeRangeDescription, summaryLength: trimmedSummary.length },
+    "OpenAI: start image generation",
+    {
+      model: OPENAI_IMAGE_MODEL,
+      size: OPENAI_IMAGE_SIZE,
+      timeRangeDescription,
+      summaryLength: trimmedSummary.length,
+    },
   );
 
   const prompt =
-    `Create detailed complex slide image that reflects the Mitou Jr channel updates for ${dateLabelJST} in Japanese. Please keep the user name and channel name as-is. Use the attached reference image of ずんだもん for style and character. Create dedicated column spaces for interesting and unique topics. Make it cute and visual heavy. Use emojis,illustrations and diagrams as much as possible instead of text. Text like ":kusa:" are emojis defined in mattermost which you don't have access. Don't directly use :hoge: so create alternative illustration or ignore if you don't understand. Base the visuals on this summary:\n${trimmedSummary}`;
+    `Create a polished 16:9 landscape infographic illustration that reflects the Mitou Jr Mattermost channel updates for ${dateLabelJST}. Make it illustration-first: communicate through cute scenes, expressive characters, icons, emojis, and simple diagrams, with only short Japanese headings and labels where needed. Preserve user names and channel names exactly as provided. Use the attached ずんだもん image as the character and style reference. Organize interesting and unique topics into clearly separated illustrated cards or scenes. Avoid paragraphs and dense text. Mattermost strings such as ":kusa:" are custom emojis; do not render the literal colon syntax. Replace them with a suitable visual symbol or omit them when unclear. Do not invent names, channel names, dates, or facts. Base the illustration only on this summary:\n${trimmedSummary}`;
 
-  const parts: any[] = [{ text: prompt }];
-
-  if (ZUNDA_BASE64) {
-    parts.push({
-      inlineData: {
-        mimeType: "image/png",
-        data: ZUNDA_BASE64,
-      },
-    });
+  if (!ZUNDA_BASE64) {
+    throw new Error("Zundamon reference image is not configured");
   }
 
-  const response = await aiClient.models.generateContent({
-    model: "gemini-3-pro-image-preview",
-    contents: [{ role: "user", parts }],
-    config: {
-      responseModalities: ["TEXT", "IMAGE"],
-      imageConfig: {
-        aspectRatio: "16:9",
-        imageSize: "4K",
-      },
-    },
-  });
-
-  const candidate = response?.candidates?.[0];
-  const responseParts = candidate?.content?.parts ?? [];
-
-  let altText = "";
-  let imageBytes: Uint8Array | null = null;
-
-  for (const part of responseParts) {
-    if ("text" in part && part.text && !altText) {
-      altText = part.text;
-    } else if ("inlineData" in part && part.inlineData?.data && !imageBytes) {
-      const base64Data = part.inlineData.data;
-      const byteCharacters = atob(base64Data);
-      const bytes = new Uint8Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        bytes[i] = byteCharacters.charCodeAt(i);
-      }
-      imageBytes = bytes;
-    }
-  }
-
-  console.log(
-    "Gemini: response parsed",
-    {
-      partsCount: responseParts.length,
-      altTextPreview: altText ? altText.slice(0, 80) : "",
-      hasImageData: !!imageBytes,
-    },
+  const referenceBytes = decodeBase64(ZUNDA_BASE64);
+  const referenceImage = await toFile(
+    referenceBytes,
+    "zundamon-reference.png",
+    { type: "image/png" },
   );
 
-  if (!imageBytes) {
-    throw new Error("Gemini did not return an image");
+  const response = await openai.images.edit({
+    model: OPENAI_IMAGE_MODEL,
+    image: referenceImage,
+    prompt,
+    size: OPENAI_IMAGE_SIZE,
+    quality: "medium",
+    output_format: "png",
+  });
+
+  const base64Data = response.data?.[0]?.b64_json;
+  if (!base64Data) {
+    throw new Error("OpenAI image API did not return image data");
   }
 
+  const imageBytes = decodeBase64(base64Data);
+  const altText =
+    `${dateLabelJST}の未踏ジュニアMattermost投稿を、ずんだもんと共にまとめたインフォグラフィック`;
+
   console.log(
-    "Gemini: image extracted",
+    "OpenAI: image generated",
     {
+      model: OPENAI_IMAGE_MODEL,
+      size: OPENAI_IMAGE_SIZE,
       byteLength: imageBytes.length,
-      altTextLength: altText.length,
+      requestId: response._request_id,
     },
   );
 
   return { imageBytes, altText };
+}
+
+function decodeBase64(data: string): Uint8Array {
+  const byteCharacters = atob(data);
+  const bytes = new Uint8Array(byteCharacters.length);
+
+  for (let i = 0; i < byteCharacters.length; i++) {
+    bytes[i] = byteCharacters.charCodeAt(i);
+  }
+
+  return bytes;
 }
