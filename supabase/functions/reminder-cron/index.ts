@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { getMentors, getPost, getReactions, getThreadPostIds, getUsersByUsernames, postReply } from "../_shared/mattermost.ts"
+import { calculateJstCalendarDayDifference } from "./date.ts"
 
 type ParsedReminderContent = {
   body: string | null
@@ -74,11 +75,12 @@ serve(async (req) => {
         console.error('Failed to fetch root post. Skipping reminder:', postId)
         continue
       }
-      // 期限日
-      const dueDate = new Date(dueDateStr)
-      // 残り日数 (当日=0, 過去なら負値)
-      const diff = dueDate.getTime() - now.getTime()
-      const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24))
+      // JSTのカレンダー日で残り日数を計算する (当日=0, 過去なら負値)
+      const diffDays = calculateJstCalendarDayDifference(dueDateStr, now)
+      if (diffDays === null) {
+        console.error('Invalid due_date. Skipping reminder:', postId, dueDateStr)
+        continue
+      }
 
       // スレッド内 (root + replies) の "done" リアクションを集計
       const threadPostIds = await getThreadPostIds(postId)
@@ -97,8 +99,8 @@ serve(async (req) => {
       const doneUserIds = Array.from(doneUserIdsSet)
 
       const { targetUsernames } = parseReminderContent(r?.content)
-      const normalizedTargets = Array.isArray(r?.target_usernames)
-        ? r.target_usernames.map((u: string) => u.toString())
+      const normalizedTargets: string[] | null = Array.isArray(r?.target_usernames)
+        ? r.target_usernames.map((u: unknown) => String(u))
         : targetUsernames
 
       let missingMentions: string[] = []
@@ -173,7 +175,8 @@ serve(async (req) => {
     })
   } catch (err) {
     console.error(err)
-    return new Response(JSON.stringify({ error: err.message }), {
+    const message = err instanceof Error ? err.message : String(err)
+    return new Response(JSON.stringify({ error: message }), {
       headers: corsHeaders(),
       status: 500
     })
