@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts"
 import { corsHeaders } from "../_shared/cors.ts"
-import { createPost, getPost, postReply, updatePost } from "../_shared/mattermost.ts"
+import { createPost, getPost, postReply } from "../_shared/mattermost.ts"
 
 /**
  * Mattermost で `/reminder-mentors 2025/02/27 [contents...]` のように呼ぶ。
@@ -199,14 +199,6 @@ serve(async (req) => {
     }
     const postId = newPost.id
 
-    // 停止用の ID をポスト本文に埋め込む（post_id をそのまま stop ID とする）
-    const stopHelpLine = `停止するには: \`/reminder-mentors stop ${postId}\``
-    const postMessageWithStop = `${postMessage}\n\n---\n${stopHelpLine}`
-    const updatedPost = await updatePost(postId, channelId, postMessageWithStop)
-    if (!updatedPost) {
-      console.error("Failed to append stop id to post:", postId)
-    }
-
     // ★ [2] remindersテーブルに content フィールドを保存
     const { error: upsertError } = await supabaseAdmin
       .from('reminders')
@@ -233,8 +225,9 @@ serve(async (req) => {
     })
   } catch (err) {
     console.error('slash-reminder-mentors error:', err)
+    const message = err instanceof Error ? err.message : String(err)
     return new Response(
-      JSON.stringify({ text: err.message }),
+      JSON.stringify({ text: message }),
       { headers: corsHeaders(), status: 500 }
     )
   }

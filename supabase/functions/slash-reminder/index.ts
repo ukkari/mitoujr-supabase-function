@@ -7,10 +7,8 @@ import {
   getPost,
   getUserByUsername,
   getUserGroupByName,
-  getUserGroupMemberIds,
-  getUsersByIds,
+  getUserGroupMembers,
   postReply,
-  updatePost,
 } from "../_shared/mattermost.ts"
 
 /**
@@ -115,8 +113,14 @@ async function stopReminder(initialPostId: string, fallbackChannelId: string) {
   return { status: 200, text: responseText }
 }
 
-async function expandMentions(rawMentions: string[]): Promise<string[]> {
+type ExpandedMentions = {
+  targetUsernames: string[]
+  unresolvedMentions: string[]
+}
+
+async function expandMentions(rawMentions: string[]): Promise<ExpandedMentions> {
   const result: string[] = []
+  const unresolvedMentions: string[] = []
   const seen = new Set<string>()
 
   const addUsername = (username: string) => {
@@ -140,18 +144,21 @@ async function expandMentions(rawMentions: string[]): Promise<string[]> {
     }
     const group = await getUserGroupByName(normalized)
     if (group) {
-      const memberIds = await getUserGroupMemberIds(group.id)
-      const members = await getUsersByIds(memberIds)
+      const members = await getUserGroupMembers(group.id)
+      if (members.length === 0) {
+        unresolvedMentions.push(normalized)
+        continue
+      }
       for (const member of members) {
         addUsername(member.username)
       }
       continue
     }
-    // user/group として見つからない場合はそのまま扱う
-    addUsername(normalized)
+    // 不明な mention をそのまま保存すると User Group 全体への通知になり得るため拒否する
+    unresolvedMentions.push(normalized)
   }
 
-  return result
+  return { targetUsernames: result, unresolvedMentions }
 }
 
 serve(async (req) => {
@@ -233,7 +240,17 @@ serve(async (req) => {
     let contents = mentionMatched[2] ?? ""
 
     const rawMentions = mentionPart.trim().split(/\s+/)
-    const targetUsernames = await expandMentions(rawMentions)
+    const { targetUsernames, unresolvedMentions } = await expandMentions(rawMentions)
+
+    if (unresolvedMentions.length > 0) {
+      const unresolvedText = unresolvedMentions.map((name) => `@${name}`).join(' ')
+      return new Response(
+        JSON.stringify({
+          text: `対象のユーザーまたはUser Groupを取得できませんでした: ${unresolvedText}`
+        }),
+        { headers: corsHeaders(), status: 200 }
+      )
+    }
 
     if (targetUsernames.length === 0) {
       const usage = "Usage: /reminder YYYY/MM/DD @user1 @user2 contents..."
@@ -278,14 +295,6 @@ serve(async (req) => {
     }
     const postId = newPost.id
 
-    // 停止用の ID をポスト本文に埋め込む（post_id をそのまま stop ID とする）
-    const stopHelpLine = `停止するには: \`/reminder stop ${postId}\``
-    const postMessageWithStop = `${postMessage}\n\n---\n${stopHelpLine}`
-    const updatedPost = await updatePost(postId, channelId, postMessageWithStop)
-    if (!updatedPost) {
-      console.error("Failed to append stop id to post:", postId)
-    }
-
     const contentPayload = JSON.stringify({
       body: contents,
       target_usernames: targetUsernames
@@ -317,8 +326,9 @@ serve(async (req) => {
     })
   } catch (err) {
     console.error('slash-reminder error:', err)
+    const message = err instanceof Error ? err.message : String(err)
     return new Response(
-      JSON.stringify({ text: err.message }),
+      JSON.stringify({ text: message }),
       { headers: corsHeaders(), status: 500 }
     )
   }

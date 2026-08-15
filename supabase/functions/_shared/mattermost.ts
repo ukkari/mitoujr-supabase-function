@@ -45,7 +45,9 @@ export async function getUserByUsername(username: string): Promise<{id: string; 
     }
   })
   if (!res.ok) {
-    console.error('Failed to fetch user by username:', normalized, await res.text())
+    if (res.status !== 404) {
+      console.error('Failed to fetch user by username:', normalized, await res.text())
+    }
     return null
   }
   const data = await res.json()
@@ -100,7 +102,7 @@ export async function getUserGroupByName(name: string): Promise<{id: string; nam
   if (!normalized) {
     return null
   }
-  const url = `${MATTERMOST_HOST}/api/v4/usergroups/name/${encodeURIComponent(normalized)}`
+  const url = `${MATTERMOST_HOST}/api/v4/groups?q=${encodeURIComponent(normalized)}&filter_allow_reference=true&per_page=200`
   const res = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${MATTERMOST_TOKEN}`,
@@ -108,30 +110,78 @@ export async function getUserGroupByName(name: string): Promise<{id: string; nam
     }
   })
   if (!res.ok) {
+    console.error('Failed to fetch user group by name:', normalized, await res.text())
     return null
   }
   const data = await res.json()
-  return {
-    id: data.id,
-    name: data.name
+  const groups = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.groups)
+    ? data.groups
+    : []
+  const group = groups.find((g: any) => g?.name === normalized)
+  if (!group) {
+    return null
   }
+  return {
+    id: group.id,
+    name: group.name
+  }
+}
+
+// User Group メンバー一覧を取得する
+export async function getUserGroupMembers(groupId: string): Promise<{id: string; username: string}[]> {
+  const perPage = 200
+  const membersById = new Map<string, {id: string; username: string}>()
+
+  for (let page = 0; ; page += 1) {
+    const url = `${MATTERMOST_HOST}/api/v4/groups/${encodeURIComponent(groupId)}/members?page=${page}&per_page=${perPage}`
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${MATTERMOST_TOKEN}`,
+        'Accept': 'application/json'
+      }
+    })
+    if (!res.ok) {
+      console.error('Failed to fetch user group members:', await res.text())
+      return []
+    }
+
+    const data = await res.json()
+    const members = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.members)
+      ? data.members
+      : []
+    for (const member of members) {
+      const userId = member?.id ?? member?.user_id
+      const username = member?.username
+      if (
+        typeof userId === 'string' && userId.length > 0 &&
+        typeof username === 'string' && username.length > 0
+      ) {
+        membersById.set(userId, { id: userId, username })
+      }
+    }
+
+    const totalMemberCount = typeof data?.total_member_count === 'number'
+      ? data.total_member_count
+      : null
+    if (
+      members.length < perPage ||
+      (totalMemberCount !== null && membersById.size >= totalMemberCount)
+    ) {
+      break
+    }
+  }
+
+  return Array.from(membersById.values())
 }
 
 // User Group メンバーの user_id 一覧を取得する
 export async function getUserGroupMemberIds(groupId: string): Promise<string[]> {
-  const url = `${MATTERMOST_HOST}/api/v4/usergroups/${groupId}/members`
-  const res = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${MATTERMOST_TOKEN}`,
-      'Accept': 'application/json'
-    }
-  })
-  if (!res.ok) {
-    console.error('Failed to fetch user group members:', await res.text())
-    return []
-  }
-  const data = await res.json()
-  return data.map((m: any) => m.user_id).filter((id: string) => typeof id === 'string')
+  const members = await getUserGroupMembers(groupId)
+  return members.map((member) => member.id)
 }
 
 // 指定した postId の reaction 情報を取得する
