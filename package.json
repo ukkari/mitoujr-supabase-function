@@ -1,5 +1,36 @@
 {
+  "name": "mattermost-automation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "cf:typegen": "wrangler types",
+    "deploy": "wrangler deploy --env=\"\"",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:dry-run": "wrangler deploy --env=\"\" --dry-run --outdir dist/worker",
+    "db:migrate": "tsx scripts/turso-migrate.ts",
+    "db:export-supabase": "tsx scripts/export-supabase-reminders.ts",
+    "db:import": "tsx scripts/import-reminders.ts",
+    "db:verify": "tsx scripts/verify-reminders.ts",
+    "db:export-turso": "tsx scripts/export-turso-reminders.ts",
+    "db:rollback-sync": "tsx scripts/sync-turso-to-supabase.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4",
+    "hono": "^4.13.5",
+    "openai": "^7.8.0"
+  },
   "devDependencies": {
-    "supabase": "^2.2.1"
+    "@cloudflare/vitest-plugin": "^1.1.2",
+    "@cloudflare/workers-types": "^5.20260830.1",
+    "@types/node": "^24.3.0",
+    "supabase": "^2.2.1",
+    "tsx": "^4.20.5",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.127.1"
   }
 }

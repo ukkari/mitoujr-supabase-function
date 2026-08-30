@@ -3,10 +3,16 @@ node_modules/
 
 # Environment variables
 .env
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 
 # Build artifacts
 dist/
 build/
+.wrangler/
+coverage/
+.migration-data/
 
 # Temporary files
 supabase/.temp/

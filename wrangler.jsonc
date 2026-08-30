@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mattermost-automation",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-30",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "OPENAI_TEXT_MODEL": "gpt-5.6-luna",
+    "OPENAI_IMAGE_MODEL": "gpt-image-2",
+    "DRY_RUN": "false"
+  },
+  "triggers": {
+    "crons": [
+      "0 15 * * *",
+      "0 22 * * *"
+    ]
+  },
+  "workflows": [
+    {
+      "name": "daily-summary-workflow",
+      "binding": "DAILY_SUMMARY_WORKFLOW",
+      "class_name": "DailySummaryWorkflow"
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "mattermost-automation-staging",
+      "vars": {
+        "OPENAI_TEXT_MODEL": "gpt-5.6-luna",
+        "OPENAI_IMAGE_MODEL": "gpt-image-2",
+        "DRY_RUN": "true"
+      },
+      "triggers": {
+        "crons": []
+      },
+      "workflows": [
+        {
+          "name": "daily-summary-workflow-staging",
+          "binding": "DAILY_SUMMARY_WORKFLOW",
+          "class_name": "DailySummaryWorkflow"
+        }
+      ]
+    }
+  }
+}
