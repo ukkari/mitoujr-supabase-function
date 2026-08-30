@@ -7,7 +7,7 @@
 - Production Workflow: `daily-summary-workflow`
 - Production Cron: `0 15 * * *` and `0 22 * * *`
 - The former staging Worker was renamed to production so its encrypted secrets could be retained without exposing them.
-- Mattermost Slash Command URLs: unchanged
+- Mattermost Slash Command URLs: changed to the production Worker routes on 2026-08-31 (user-confirmed)
 - Supabase Functions/Postgres/Storage: retained; all five Supabase Cron jobs are disabled
 
 The Worker source has no Supabase runtime dependency. Supabase access exists only in the one-time migration and rollback scripts. Supabase Storage remains untouched for old audio links.
@@ -69,8 +69,8 @@ The account was upgraded to Workers Paid before cutover. A one-time live test th
 - [x] Read back final Supabase and Turso reminder statistics: 14 rows, all completed, identical due-date range and latest update timestamp.
 - [x] Deploy the production Worker and confirm both Cloudflare Cron Triggers.
 - [ ] Run an authenticated production `today` Workflow and verify text/image fallback behavior.
-- [ ] Update `/reminder` to `POST https://mattermost-automation.ukkaripon.workers.dev/slash-reminder`.
-- [ ] Update `/reminder-mentors` to `POST https://mattermost-automation.ukkaripon.workers.dev/slash-reminder-mentors`.
+- [x] Update `/reminder` to `POST https://mattermost-automation.ukkaripon.workers.dev/slash-reminder` (user-confirmed on 2026-08-31).
+- [x] Update `/reminder-mentors` to `POST https://mattermost-automation.ukkaripon.workers.dev/slash-reminder-mentors` (user-confirmed on 2026-08-31).
 - [x] Confirm invalid token/method/admin requests remain rejected.
 - [ ] Observe the 00:00 JST reminder and 07:00 JST summary for two daily cycles.
 - [ ] Verify Turso state, Workflow status, Mattermost posts, and absence of duplicates.
