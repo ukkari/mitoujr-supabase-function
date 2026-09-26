@@ -22,9 +22,10 @@ const KIND = {
 const CUTS = ['band', 'zoom', 'pixel', 'whip', 'iris', 'flash', 'tiles', 'swipe', 'shutter'];
 const FREEZE_LEN = 0.5;
 const CUT_LEN = 0.24;
-// Narration is always sped up; scenes are 4 s or 6 s long. Each voice starts PRE before its cut
-// and may run POST past the next one, so consecutive voices overlap like a quick hand-off.
-const TEMPO = 1.4, MIN_SPEED = 1.15, MAX_SPEED = 1.65, PRE = 0.2, POST = 0.15, BODY_MAX = 56;
+// Narration is always sped up hard; scenes are 3–6 s (whole seconds = two beats). Each voice starts
+// PRE before its cut and may run POST past the next one, so consecutive voices overlap like a hand-off.
+const TEMPO = 1.7, MIN_SPEED = 1.45, MAX_SPEED = 2, PRE = 0.2, POST = 0.15, BODY_MAX = 56;
+const MIN_SCENE = 3, MAX_SCENE = 6;
 
 function trimSilence(raw, sr) {
   let a = 0, b = raw.length;
@@ -45,26 +46,29 @@ async function prepareAudio(plan, audio, rollLen) {
     if (raw.length < sr * 0.1) throw new Error('Narration is empty or silent');
     clips.push({ raw, sr, natural: raw.length / sr });
   }
-  const fit = (speed) => clips.map(c => Math.max(2, Math.ceil((c.natural / speed - PRE - POST) / 2)));
-  const total = (bars) => bars.reduce((s, b) => s + b * 2, 0);
+  const fit = (speed) => clips.map(c => Math.max(MIN_SCENE, Math.ceil(c.natural / speed - PRE - POST)));
+  const total = (lens) => lens.reduce((s, b) => s + b, 0);
   const body = BODY_MAX - rollLen;
   let bars = fit(TEMPO);
   if (total(bars) > body) bars = fit(MAX_SPEED);
   // `window` is in unstretched seconds so the runner can shorten the text proportionally.
   const tooLong = [];
   bars.forEach((b, index) => {
-    if (b > 3) tooLong.push({ index, natural: clips[index].natural, window: (6 + PRE + POST) * MAX_SPEED });
+    if (b > MAX_SCENE) tooLong.push({ index, natural: clips[index].natural, window: (MAX_SCENE + PRE + POST) * MAX_SPEED });
   });
   if (!tooLong.length && total(bars) > body) {
-    const longest = bars.map((b, index) => ({ b, index })).filter(x => x.b === 3).sort((a, b) => clips[b.index].natural - clips[a.index].natural);
-    for (let over = total(bars) - body; over > 0 && longest.length; over -= 2) {
-      const { index } = longest.shift();
-      tooLong.push({ index, natural: clips[index].natural, window: (4 + PRE + POST) * MAX_SPEED });
+    const longest = bars.map((b, index) => ({ b, index })).filter(x => x.b > MIN_SCENE).sort((a, b) => b.b - a.b);
+    for (let over = total(bars) - body; over > 0 && longest.length;) {
+      const { index, b } = longest.shift();
+      tooLong.push({ index, natural: clips[index].natural, window: (MIN_SCENE + PRE + POST) * MAX_SPEED });
+      over -= b - MIN_SCENE;
     }
   }
   if (tooLong.length) return { tooLong };
   let t = 2;
-  plan.scenes.forEach((s, i) => { s.start = t; s.end = t + bars[i] * 2; t = s.end; });
+  plan.scenes.forEach((s, i) => { s.start = t; s.end = t + bars[i]; t = s.end; });
+  // Whole-second scenes can leave an odd total; the end lands on a bar so the score resolves cleanly.
+  if (t % 2) { plan.scenes.at(-1).end += 1; t += 1; }
   if (t < 10) { plan.scenes.at(-1).end += 10 - t; t = 10; }
   t += rollLen;
   const speech = clips.map((c, i) => {
@@ -94,9 +98,9 @@ function cueSheet(plan) {
   const posts = plan.posts ?? [];
   const scenes = plan.scenes.map((s) => {
     const D = s.end - s.start, ids = (s.posts ?? []).filter((id) => posts[id]);
-    const step = ids.length > 1 ? clamp(Math.floor((D - 1.75) / ids.length / 0.25) * 0.25, 0.5, 1) : 0;
+    const step = ids.length > 1 ? clamp(Math.floor((D - 1.5) / ids.length / 0.25) * 0.25, 0.25, 1) : 0;
     const cards = ids.map((id, j) => {
-      const at = s.start + 0.5 + j * step, p = posts[id];
+      const at = s.start + 0.35 + j * step, p = posts[id];
       const chips = p.reactions.length + (p.replies ? 1 : 0);
       return { id, at, chips: Array.from({ length: chips }, (_, k) => at + 0.3 + k * BEAT / 8) };
     });
@@ -441,8 +445,8 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     // Original post cards, stacked, each slammed in from alternating sides.
     const n = cue.cards.length, spots = [];
     if (n) {
-      const area = [X(670), X(1505)], gap = X(40);
-      const h = Math.min(X(300), (area[1] - area[0] - gap * (n - 1)) / n);
+      const area = [X(670), X(1800)], gap = X(44);
+      const h = Math.min(X(330), (area[1] - area[0] - gap * (n - 1)) / n);
       const y0 = area[0] + (area[1] - area[0] - (n * h + (n - 1) * gap)) / 2;
       const latest = cue.cards.reduce((mx, card, j) => (t >= card.at ? j : mx), -1);
       cue.cards.forEach((card, j) => {
@@ -474,7 +478,7 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
       if (since < 0) return;
       const r = (j) => hashN(seed + i * 31 + st.k * 7 + j);
       const x = r(1) < 0.5 ? X(80) + r(2) * X(70) : W - X(80) - r(2) * X(70);
-      emo(list[(st.k + 1) % list.length], x, X(740) + r(3) * X(720), X(150) * E.outBack(seg(since, 0, 0.2), 3) * (1 + 0.14 * kickEnv(t)),
+      emo(list[(st.k + 1) % list.length], x, X(740) + r(3) * X(1000), X(150) * E.outBack(seg(since, 0, 0.2), 3) * (1 + 0.14 * kickEnv(t)),
         (r(5) - 0.5) * 0.7 + Math.sin(t * 6 + st.k) * 0.14);
     });
   }
@@ -525,24 +529,6 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     c.restore();
   }
 
-  // Captions live outside the camera and effects so they always stay readable.
-  function caption(t, i) {
-    const c = K.ctx, s = plan.scenes[i], sp = speech[i];
-    const top = X(1540), h = X(280), x = X(32), w = W - X(64);
-    rr(x, top, w, h, X(34)); c.fillStyle = 'rgba(6,8,18,.92)'; c.fill();
-    c.strokeStyle = col(i); c.lineWidth = X(6); c.stroke();
-    const lay = K.fit(`n${i}`, s.narration, 'display', w - X(64), 3, X(56), X(34), { lh: 1.3 });
-    const upto = Math.ceil(lay.glyphs.length * (sp ? clamp((t - sp.start) / sp.dur) : 1));
-    const y = top + (h - lay.lines.length * lay.lineH) / 2;
-    K.font('display', lay.size);
-    c.textBaseline = 'top';
-    lay.glyphs.forEach((g, k) => {
-      c.fillStyle = k >= upto ? 'rgba(255,255,255,.34)' : k >= upto - 3 ? '#ffe100' : '#fff';
-      c.fillText(g.s, x + X(32) + g.x, y + g.li * lay.lineH);
-    });
-    emo(emojiOf(plan, i)[0], x + w - X(24), top + X(4), X(84) * (1 + 0.2 * kickEnv(t)), 0.2);
-  }
-
   function chrome(t) {
     const c = K.ctx;
     K.fill(K.gradient([[0, 'rgba(0,0,0,.7)'], [1, 'rgba(0,0,0,0)']], 0, 0, 0, X(170)), 0, 0, W, X(170));
@@ -589,7 +575,6 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     c.restore();
     if (hit > 0.45) K.fill(`rgba(255,255,255,${Math.min(0.55, (hit - 0.45) * 0.8)})`);
     chrome(t);
-    if (index >= 0 && index < N) caption(t, index);
   };
 
   // Word pops of every heading, so the score can hit them.
