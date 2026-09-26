@@ -25,7 +25,9 @@ registerVideoRoutes(app);
 app.notFound((context) => context.json({ error: "Not found" }, 404));
 app.onError((error, context) => {
   console.error("Request failed", { error: error.message });
-  return context.json({ error: "Internal server error" }, 500);
+  // Video admin errors are fixed strings (no post bodies or keys); show them to the authenticated runner.
+  const authorized = context.req.path.startsWith("/admin/summary-video/") && context.res.status !== 401;
+  return context.json({ error: authorized ? error.message : "Internal server error" }, 500);
 });
 
 export default {

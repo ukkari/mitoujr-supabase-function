@@ -22,8 +22,9 @@ const KIND = {
 const CUTS = ['band', 'zoom', 'pixel', 'whip', 'iris', 'flash', 'tiles', 'swipe', 'shutter'];
 const FREEZE_LEN = 0.5;
 const CUT_LEN = 0.24;
-// Narration is always sped up; scenes are one or 1.5 bars-pairs (4 s / 6 s) long.
-const TEMPO = 1.4, MAX_SPEED = 1.65, LEAD = 0.2, TAIL = 0.3, BODY_MAX = 56;
+// Narration is always sped up; scenes are 4 s or 6 s long. Each voice starts PRE before its cut
+// and may run POST past the next one, so consecutive voices overlap like a quick hand-off.
+const TEMPO = 1.4, MIN_SPEED = 1.15, MAX_SPEED = 1.65, PRE = 0.2, POST = 0.15, BODY_MAX = 56;
 
 function trimSilence(raw, sr) {
   let a = 0, b = raw.length;
@@ -44,7 +45,7 @@ async function prepareAudio(plan, audio, rollLen) {
     if (raw.length < sr * 0.1) throw new Error('Narration is empty or silent');
     clips.push({ raw, sr, natural: raw.length / sr });
   }
-  const fit = (speed) => clips.map(c => Math.max(2, Math.ceil((LEAD + c.natural / speed + TAIL) / 2)));
+  const fit = (speed) => clips.map(c => Math.max(2, Math.ceil((c.natural / speed - PRE - POST) / 2)));
   const total = (bars) => bars.reduce((s, b) => s + b * 2, 0);
   const body = BODY_MAX - rollLen;
   let bars = fit(TEMPO);
@@ -52,13 +53,13 @@ async function prepareAudio(plan, audio, rollLen) {
   // `window` is in unstretched seconds so the runner can shorten the text proportionally.
   const tooLong = [];
   bars.forEach((b, index) => {
-    if (b > 3) tooLong.push({ index, natural: clips[index].natural, window: (6 - LEAD - TAIL) * MAX_SPEED });
+    if (b > 3) tooLong.push({ index, natural: clips[index].natural, window: (6 + PRE + POST) * MAX_SPEED });
   });
   if (!tooLong.length && total(bars) > body) {
     const longest = bars.map((b, index) => ({ b, index })).filter(x => x.b === 3).sort((a, b) => clips[b.index].natural - clips[a.index].natural);
     for (let over = total(bars) - body; over > 0 && longest.length; over -= 2) {
       const { index } = longest.shift();
-      tooLong.push({ index, natural: clips[index].natural, window: (4 - LEAD - TAIL) * MAX_SPEED });
+      tooLong.push({ index, natural: clips[index].natural, window: (4 + PRE + POST) * MAX_SPEED });
     }
   }
   if (tooLong.length) return { tooLong };
@@ -67,9 +68,10 @@ async function prepareAudio(plan, audio, rollLen) {
   if (t < 10) { plan.scenes.at(-1).end += 10 - t; t = 10; }
   t += rollLen;
   const speech = clips.map((c, i) => {
-    const s = plan.scenes[i], start = s.start + LEAD;
-    const target = Math.min(s.end - start - TAIL, c.natural / TEMPO);
-    const samples = timeStretch(c.raw, c.natural / target, c.sr);
+    // Fill the slot (never slower than MIN_SPEED) so the next voice cuts in over this one's tail.
+    const s = plan.scenes[i], start = s.start - PRE;
+    const speed = clamp(c.natural / (s.end + POST - start), MIN_SPEED, MAX_SPEED);
+    const samples = timeStretch(c.raw, speed, c.sr);
     const buffer = ctx.createBuffer(1, samples.length, c.sr);
     buffer.copyToChannel(samples, 0);
     return { start, dur: samples.length / c.sr, buffer };
