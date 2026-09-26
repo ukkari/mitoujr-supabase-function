@@ -16,6 +16,8 @@ export type VideoSource = {
   channels: Array<{ name: string; url: string; posts: SourcePost[] }>;
 };
 
+export type Vocal = "none" | "laugh" | "gasp" | "sigh" | "breath";
+
 export type SceneKind = "progress" | "question" | "share" | "fun" | "news";
 
 export type VideoScene = {
@@ -25,6 +27,10 @@ export type VideoScene = {
   narration: string;
   keyword: string;
   emoji: string[];
+  // Performance: a Gemini prebuilt voice, a delivery direction, and an optional vocal burst.
+  voice: string;
+  tone: string;
+  vocal: Vocal;
   // Indices into VideoPlan.posts: the original posts shown as cards in this scene.
   posts: number[];
   start: number;
@@ -42,7 +48,7 @@ export type VideoPost = {
   replies: number;
 };
 
-export const PLAN_VERSION = 3;
+export const PLAN_VERSION = 4;
 
 export type VideoPlan = {
   version: number;

@@ -51,9 +51,18 @@ export function demoDirection() {
     [0, "progress", "地味だけど前進！", "バグを三つ退治して、明日は朝から実験です。", "前進", ["🐛", "💪", "🔬", "⏰"],
       [[4, "地味だけど前進！"], [13, "明日は朝から実験！早起きがんばる"]]],
   ];
+  const cast = [
+    { voice: "Fenrir", tone: "驚きを隠せずハイテンションで", vocal: "gasp" },
+    { voice: "Sadaltager", tone: "謎解きの答えを明かすように", vocal: "none" },
+    { voice: "Puck", tone: "ニヤッと笑いながら軽快に", vocal: "laugh" },
+    { voice: "Charon", tone: "頼れる解説者のように", vocal: "none" },
+    { voice: "Sadachbia", tone: "元気いっぱいに", vocal: "none" },
+    { voice: "Zubenelgenubi", tone: "雑談っぽくゆるく", vocal: "none" },
+    { voice: "Pulcherrima", tone: "前のめりに応援するように", vocal: "breath" },
+  ];
   return { headline: "動いた！直った！盛り上がった！", title: "🚀 モーターが動いた！ボタンの謎も解決 3チャンネル一気見 🔥", emoji: ["🚀", "🔥", "🎉"], accent: "#93fa59", music: "futurebass", transition: "whip",
-    scenes: scenes.map(([source, kind, heading, narration, keyword, emoji, posts]) =>
-      ({ source, kind, heading, narration, keyword, emoji, posts: posts.map(([id, quote]) => ({ id, quote })) })) };
+    scenes: scenes.map(([source, kind, heading, narration, keyword, emoji, posts], index) =>
+      ({ source, kind, heading, narration, keyword, emoji, ...cast[index], posts: posts.map(([id, quote]) => ({ id, quote })) })) };
 }
 
 export function demoPlan(date: string): VideoPlan {

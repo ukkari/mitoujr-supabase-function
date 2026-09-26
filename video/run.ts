@@ -26,7 +26,10 @@ async function api(path: string, init: RequestInit = {}) {
   const response = await fetch(endpoint + path, { ...init,
     headers: { Authorization: `Bearer ${secret}`, ...init.headers }, redirect: "error",
     signal: AbortSignal.timeout(240_000) });
-  if (!response.ok) throw new Error(`Video API ${path} failed (${response.status}); inspect Worker status (private content omitted)`);
+  if (!response.ok) {
+    const detail = await response.json().then((body: any) => String(body?.error ?? "")).catch(() => "");
+    throw new Error(`Video API ${path} failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
   return await response.json() as any;
 }
 

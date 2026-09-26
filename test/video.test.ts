@@ -28,11 +28,48 @@ describe("Japanese video direction", () => {
     raw.scenes[0].source = 100;
     expect(() => validatePlan(raw, source)).toThrow("Invalid video scene");
     raw.scenes[0].source = 0;
-    raw.scenes[0].narration = "あ".repeat(35);
+    raw.scenes[0].narration = "あ".repeat(61);
     expect(() => validatePlan(raw, source)).toThrow("reading budget");
-    raw.scenes[0].narration = "短い文です。";
-    raw.scenes = Array.from({ length: 14 }, () => raw.scenes[0]);
+    raw.scenes = [];
     expect(() => validatePlan(raw, source)).toThrow("Invalid video direction");
+  });
+  it("repairs slightly off model output instead of discarding the storyboard", () => {
+    const raw: any = demoDirection();
+    raw.headline = "あ".repeat(30); raw.title = "🎬" + "い".repeat(50); raw.accent = "red"; raw.music = "polka";
+    raw.scenes[0].narration = "あ".repeat(40); raw.scenes[0].heading = "う".repeat(30); raw.scenes[0].kind = "rant";
+    raw.scenes = Array.from({ length: 14 }, (_, i) => raw.scenes[i % 7]);
+    const plan = validatePlan(raw, source);
+    expect(plan.scenes).toHaveLength(13);
+    expect([...plan.headline]).toHaveLength(24);
+    expect([...plan.title]).toHaveLength(40);
+    expect(plan).toMatchObject({ accent: "#93fa59", music: "futurebass" });
+    expect(plan.scenes[0]).toMatchObject({ kind: "progress", narration: "あ".repeat(40) });
+    expect([...plan.scenes[0].heading]).toHaveLength(24);
+  });
+  it("casts a different voice for neighbouring topics and keeps performance hints bounded", () => {
+    const raw = demoDirection();
+    raw.scenes[1].voice = raw.scenes[0].voice;
+    raw.scenes[2].voice = "NotAVoice";
+    raw.scenes[3].tone = "x".repeat(41);
+    raw.scenes[4].vocal = "scream";
+    const plan = validatePlan(raw, source);
+    expect(plan.scenes[0]).toMatchObject({ voice: "Fenrir", tone: "驚きを隠せずハイテンションで", vocal: "gasp" });
+    expect(plan.scenes.every((scene, i) => i === 0 || scene.voice !== plan.scenes[i - 1].voice)).toBe(true);
+    expect(plan.scenes[3].tone).toBe("ワクワクした感じで");
+    expect(plan.scenes[4].vocal).toBe("none");
+  });
+  it("sends the cast voice, tone and vocal tag to Gemini TTS", async () => {
+    const mock = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ steps: [{ type: "model_output", content: [{ type: "audio", data: "wav" }] }] }));
+    vi.stubGlobal("fetch", mock);
+    await synthesize({ GEMINI_API_KEY: "k" }, "動きました！", { voice: "Puck", tone: "笑いながら", vocal: "laugh" });
+    await synthesize({ GEMINI_API_KEY: "k" }, "本文", { voice: "Evil", tone: "<x>", vocal: "<script>" });
+    const [first, second] = mock.mock.calls.map(([, init]) => JSON.parse(String(init.body)));
+    expect(first.generation_config.speech_config[0].voice).toBe("Puck");
+    expect(first.input[0].content[0].text).toBe("<laugh> 動きました！");
+    expect(first.input[0].content[0].annotations[0].style).toMatch(/^笑いながら。/);
+    expect(second.generation_config.speech_config[0].voice).toBe("Kore");
+    expect(second.input[0].content[0].text).toBe("本文");
+    expect(second.input[0].content[0].annotations[0].style).not.toContain("<x>");
   });
   it("keeps only real emoji from the model", () => {
     expect(emojiOf(["🔥", "abc", "👍🏽", "👨‍💻", "🎉🎉", 5, "✨", "🚀", "💯"])).toEqual(["🔥", "👍🏽", "👨‍💻", "✨", "🚀"]);

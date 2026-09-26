@@ -17,9 +17,12 @@ async function request(config: GeminiConfig, path: string, body: unknown) {
       signal: AbortSignal.timeout(90_000),
     });
     if (response.ok) return await response.json() as GeminiResponse;
-    // Do not print upstream bodies: they may echo private posts or credentials.
+    // Do not print upstream bodies: they may echo private posts or credentials. Only the
+    // short status/reason of a 400 (schema or argument problems) is kept, with quotes removed.
     if (![500, 502, 503, 504].includes(response.status) || attempt >= 2) {
-      throw new Error(`Gemini request failed (${response.status})`);
+      const reason = response.status === 400 ? await response.json()
+        .then((body: any) => String(body?.error?.message ?? "").replace(/["'`][^"'`]*["'`]/g, "…").slice(0, 200)).catch(() => "") : "";
+      throw new Error(`Gemini request failed (${response.status})${reason ? `: ${reason}` : ""}`);
     }
     await response.body?.cancel();
     await new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** attempt));
@@ -45,8 +48,20 @@ const MUSIC = ["futurebass", "phonk", "trap", "house", "citypop"];
 const TRANSITIONS = ["whip", "zoom", "flash", "swipe", "band", "pixel"];
 const QUOTE_MAX = 42;
 export const MAX_SCENES = 13;
+// Gemini TTS prebuilt voices and their character, so the director can cast each topic.
+export const VOICES: Record<string, string> = {
+  Zephyr: "明るい", Puck: "アップビート", Charon: "解説調", Kore: "しっかり", Fenrir: "興奮気味", Leda: "若々しい",
+  Orus: "力強い", Aoede: "軽やか", Callirrhoe: "のんびり", Autonoe: "明るい", Enceladus: "息多め", Iapetus: "クリア",
+  Umbriel: "気さく", Algieba: "なめらか", Despina: "なめらか", Erinome: "クリア", Algenib: "しゃがれ声", Rasalgethi: "解説調",
+  Laomedeia: "アップビート", Achernar: "やわらか", Alnilam: "力強い", Schedar: "落ち着き", Gacrux: "大人っぽい",
+  Pulcherrima: "前のめり", Achird: "フレンドリー", Zubenelgenubi: "カジュアル", Vindemiatrix: "やさしい",
+  Sadachbia: "元気", Sadaltager: "物知り", Sulafat: "あたたかい",
+};
+const VOCALS = ["none", "laugh", "gasp", "sigh", "breath"];
 export const NARRATION_MAX = 34;
-const emojiList = { type: "ARRAY", minItems: 1, maxItems: 5, items: string };
+const NARRATION_LIMIT = 60;
+// No min/maxItems in the schema: nested bounds explode Gemini's constrained decoding. validatePlan enforces them.
+const emojiList = { type: "ARRAY", items: string };
 const schema = {
   type: "OBJECT",
   properties: {
@@ -57,17 +72,19 @@ const schema = {
     music: { ...string, enum: MUSIC },
     transition: { ...string, enum: TRANSITIONS },
     scenes: {
-      type: "ARRAY", minItems: 1, maxItems: MAX_SCENES,
+      type: "ARRAY",
       items: {
         type: "OBJECT",
         properties: {
           source: { type: "INTEGER" }, kind: { ...string, enum: KINDS }, heading: string, narration: string, keyword: string, emoji: emojiList,
+          // Plain strings: a 30-value enum makes the schema too large for Gemini. validatePlan repairs them.
+          voice: string, tone: string, vocal: string,
           posts: {
-            type: "ARRAY", minItems: 1, maxItems: 4,
+            type: "ARRAY",
             items: { type: "OBJECT", properties: { id: { type: "INTEGER" }, quote: string }, required: ["id", "quote"] },
           },
         },
-        required: ["source", "kind", "heading", "narration", "keyword", "emoji", "posts"],
+        required: ["source", "kind", "heading", "narration", "keyword", "emoji", "voice", "tone", "vocal", "posts"],
       },
     },
   },
@@ -115,24 +132,33 @@ export function pickQuote(message: string, quote: unknown, max = QUOTE_MAX): str
   return clip(clean, max);
 }
 
+// Model output is repaired where that is safe (trim, defaults); only unusable text is rejected.
 export function validatePlan(raw: any, source: VideoSource): VideoPlan {
-  if (!boundedText(raw?.headline, 24) || !boundedText(raw?.title, 40) || !/^#[0-9a-f]{6}$/i.test(raw?.accent) ||
-    !MUSIC.includes(raw.music) || !TRANSITIONS.includes(raw.transition) ||
-    !Array.isArray(raw.scenes) || raw.scenes.length < 1 || raw.scenes.length > MAX_SCENES) {
+  if (!boundedText(raw?.headline, 60) || !boundedText(raw?.title, 80) ||
+    !Array.isArray(raw.scenes) || raw.scenes.length < 1) {
     throw new Error("Invalid video direction");
   }
+  raw = { ...raw, headline: clip(raw.headline, 24), title: clip(raw.title, 40),
+    accent: /^#[0-9a-f]{6}$/i.test(raw.accent) ? raw.accent : "#93fa59",
+    music: MUSIC.includes(raw.music) ? raw.music : "futurebass",
+    transition: TRANSITIONS.includes(raw.transition) ? raw.transition : "whip",
+    scenes: raw.scenes.slice(0, MAX_SCENES) };
   const all = flatPosts(source);
   const posts: VideoPost[] = [];
   const used = new Map<number, number>();
+  let previousVoice = "";
   const scenes = raw.scenes.map((scene: any, index: number) => {
     // Provisional two-bar slots; the renderer re-times scenes from the sped-up voice.
     const start = 2 + 4 * index, end = start + 4;
-    if (!Number.isInteger(scene.source) || !source.channels[scene.source] || !KINDS.includes(scene.kind) ||
-      !boundedText(scene.heading, 24) || !boundedText(scene.keyword, 10) ||
-      !boundedText(scene.narration, NARRATION_MAX) ||
+    // Narration longer than the target is allowed: the renderer asks for a shorter read if it cannot fit.
+    if (!Number.isInteger(scene.source) || !source.channels[scene.source] ||
+      !boundedText(scene.heading, 60) || !boundedText(scene.keyword, 30) ||
+      !boundedText(scene.narration, NARRATION_LIMIT) ||
       !/[\u3040-\u30ff\u3400-\u9fff]/u.test(scene.narration)) {
       throw new Error("Invalid video scene or narration exceeds its reading budget");
     }
+    scene = { ...scene, kind: KINDS.includes(scene.kind) ? scene.kind : "progress",
+      heading: clip(scene.heading, 24), keyword: [...scene.keyword].slice(0, 10).join("") };
     const refs = new Map<number, unknown>();
     for (const ref of Array.isArray(scene.posts) ? scene.posts : []) {
       if (Number.isInteger(ref?.id) && all[ref.id] && refs.size < 4 && !refs.has(ref.id)) refs.set(ref.id, ref.quote);
@@ -147,8 +173,15 @@ export function validatePlan(raw: any, source: VideoSource): VideoPlan {
       }
       return used.get(id)!;
     });
+    // Neighbouring topics never share a voice: the hand-off is part of the energy.
+    const names = Object.keys(VOICES);
+    let voice = names.includes(scene.voice) ? scene.voice : names[index % names.length];
+    if (voice === previousVoice) voice = names[(names.indexOf(voice) + 7) % names.length];
+    previousVoice = voice;
     return { source: scene.source, kind: scene.kind, heading: scene.heading, narration: scene.narration,
-      keyword: scene.keyword, emoji: emojiOf(scene.emoji), posts: ids, start, end };
+      keyword: scene.keyword, emoji: emojiOf(scene.emoji), voice,
+      tone: boundedText(scene.tone, 40) ? scene.tone : "ワクワクした感じで", vocal: VOCALS.includes(scene.vocal) ? scene.vocal : "none",
+      posts: ids, start, end };
   });
   const people = new Map<string, { userId: string; user: string; posts: number }>();
   for (const post of all) {
@@ -183,7 +216,7 @@ export function directionInput(source: VideoSource) {
 
 export async function directSummary(config: GeminiConfig, source: VideoSource): Promise<VideoPlan> {
   const raw = await json(config, `あなたは日本語のMattermost日次まとめ動画の編集者。TikTok/ショート動画世代向けに、テンポ最優先でドーパミンが出る編集にする。
-縦動画。冒頭2秒 → 話題シーン（1つ4〜6秒、読み上げは1.4倍速に早送りされる）→ 締め2秒。最長60秒。
+縦動画。冒頭2秒 → 話題シーン（1つ3〜6秒、読み上げは1.7倍速前後に早送りされる）→ 締め2秒。最長60秒。
 目的はコミュニティの人に「どのチャンネルで何が起きているか」を広く知ってもらうこと。厳選より網羅を優先する。
 投稿があったチャンネルは原則すべて、1チャンネル1シーンで紹介する（postCountが多い順に並べる）。シーン数の上限は${MAX_SCENES}。
 チャンネルが上限より多い場合だけ、投稿の少ないチャンネルを省く（省いたチャンネルは動画の最後に名前と投稿数が自動で一覧表示される）。
@@ -196,8 +229,11 @@ quoteはその投稿本文から${QUOTE_MAX}文字以内でそのまま抜き出
 headingは16文字以内のパンチのある一言（「！」や体言止め歓迎、誇張はしない）。keywordは8文字以内。
 emojiは話題にぴったりの絵文字を3〜5個（1要素に絵文字1つ、文字は入れない）。画面に大量に飛ばすので、内容が一目で伝わる具体的な絵文字を選ぶ。
 narrationは読み上げる日本語そのもの。18〜30文字（最大${NARRATION_MAX}文字）の一息で言える短文。前置き不要で結論から。
-URL・Markdown・絵文字を読ませず自然な日本語にし、必ず文を完結させる。字幕にも同じnarrationを表示する。
+URL・Markdown・絵文字を読ませず自然な日本語にし、必ず文を完結させる（画面には表示せず音声だけで伝える）。
 チャンネル名・ユーザー名は資料どおりに扱う。headlineは20文字以内のフック、emojiにその日を象徴する絵文字を3〜5個。
+各シーンは別々の声で読み上げる。voiceは話題の雰囲気に合う声を選び、隣り合うシーンで同じ声を使わない（声の性格: ${Object.entries(VOICES).map(([name, trait]) => `${name}=${trait}`).join(", ")}）。
+toneはその声への演技指示（40文字以内。例:「驚きを隠せずハイテンションで」「ニヤッと笑いながら軽快に」「ひそひそ声で秘密を明かすように」）。話題の感情に合わせ、シーンごとに変化をつける。
+vocalは読み上げの冒頭に入れる声の効果（laugh=笑い, gasp=息をのむ, sigh=ため息, breath=息を吸う, none=なし）。面白い話題や驚く話題でだけ使い、多用しない。
 titleは動画に添えて投稿するタイトル。40文字以内、絵文字を2〜3個入れて、思わず再生したくなる一言（例: その日一番の出来事やチャンネル数に触れる）。誇張・釣りすぎはしない。
 accentは暗い背景で映える鮮やかな色(#rrggbb)。musicとtransitionはノリの良いものを選ぶ。`, directionInput(source), schema);
   return validatePlan(raw, source);
@@ -211,16 +247,20 @@ export async function shortenNarration(config: GeminiConfig, text: string, max: 
   return result.text;
 }
 
-export async function synthesize(config: GeminiConfig, text: string): Promise<string> {
+export async function synthesize(config: GeminiConfig, text: string,
+  cast: { voice?: string; tone?: string; vocal?: string } = {}): Promise<string> {
   // PlaceReel's per-card voice generation, using the current Gemini TTS REST schema.
+  // The tone is model text: keep it as a bounded style hint, never as part of the spoken text.
+  const tone = boundedText(cast.tone, 40) ? `${cast.tone}。` : "";
+  const vocal = cast.vocal && cast.vocal !== "none" && VOCALS.includes(cast.vocal) ? `<${cast.vocal}> ` : "";
   const result = await request(config, "interactions", {
     model: config.GEMINI_TTS_MODEL || "gemini-3.8-flash-tts",
-    input: [{ type: "user_input", content: [{ type: "text", text,
+    input: [{ type: "user_input", content: [{ type: "text", text: vocal + text,
       annotations: [{ type: "speech_metadata", style:
-        "日本語で、テンション高めでノリのよいショート動画のナレーション。かなり速めに、間を空けずたたみかけるように、本文だけを読む。" }],
+        `${tone}日本語のショート動画ナレーション。表現豊かに感情を込め、かなり速めに、間を空けずたたみかけるように、本文だけを読む。` }],
     }] }],
     response_format: { type: "audio", mime_type: "audio/wav", sample_rate: 24000 },
-    generation_config: { speech_config: [{ voice: config.GEMINI_VOICE || "Kore" }] },
+    generation_config: { speech_config: [{ voice: cast.voice && VOICES[cast.voice] ? cast.voice : config.GEMINI_VOICE || "Kore" }] },
     store: false,
   });
   const audio = result.steps?.filter((step: any) => step.type === "model_output")

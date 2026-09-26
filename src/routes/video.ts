@@ -154,7 +154,7 @@ export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
       if (!updated.rowsAffected) return c.json({ error: "Storyboard expired or already publishing" }, 409);
       scene.narration = shorter;
     }
-    return c.json({ audio: await synthesize(gemini, scene.narration), narration: scene.narration });
+    return c.json({ audio: await synthesize(gemini, scene.narration, scene), narration: scene.narration });
   });
 
   app.get("/admin/summary-video/:date/avatar/:userId", async (c) => {
