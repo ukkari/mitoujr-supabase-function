@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "video": "tsx video/run.ts",
+    "video:demo": "tsx video/run.ts --demo",
     "dev": "wrangler dev",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -26,7 +28,10 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.1.2",
     "@cloudflare/workers-types": "^5.20260830.1",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "@types/node": "^24.3.0",
+    "playwright": "^1.63.0",
     "supabase": "^2.2.1",
     "tsx": "^4.20.5",
     "typescript": "^6.0.3",

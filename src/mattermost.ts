@@ -9,6 +9,8 @@ export type MattermostPost = {
   message: string;
   create_at: number;
   delete_at?: number;
+  type?: string;
+  props?: Record<string, unknown>;
 };
 export type MattermostReaction = { user_id: string; emoji_name: string };
 export type MattermostChannel = {
@@ -50,6 +52,7 @@ export class MattermostClient {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
+      signal: init?.signal ?? AbortSignal.timeout(30_000),
       headers: init?.headers ?? this.headers(Boolean(init?.body)),
     });
     if (!response.ok) {
@@ -241,16 +244,26 @@ export class MattermostClient {
     endTimeUtc: number,
   ): Promise<MattermostPost[]> {
     if (await this.isRestrictedChannel(channelId)) return [];
-    const data = await this.request<{
-      order?: string[];
-      posts?: Record<string, MattermostPost>;
-    }>(`/api/v4/channels/${encodeURIComponent(channelId)}/posts?per_page=500`);
-    const posts = data.posts ?? {};
+    const posts: Record<string, MattermostPost> = {};
+    for (let page = 0; ; page += 1) {
+      if (page >= 100) throw new Error("Mattermost daily collection exceeded its page limit");
+      const data = await this.request<{ order?: string[]; posts?: Record<string, MattermostPost> }>(
+        `/api/v4/channels/${encodeURIComponent(channelId)}/posts?per_page=200&page=${page}`,
+      );
+      const batch = (data.order ?? []).map((id) => data.posts?.[id]).filter((post): post is MattermostPost => Boolean(post));
+      for (const post of batch) posts[post.id] = post;
+      if (batch.length < 200 || batch.some((post) => post.create_at < startTimeUtc)) break;
+    }
     const selected: MattermostPost[] = [];
-    for (const id of data.order ?? []) {
-      const post = posts[id];
-      if (!post || post.create_at < startTimeUtc || post.create_at >= endTimeUtc) continue;
-      const root = posts[post.root_id || post.id];
+    const roots = new Map<string, MattermostPost | null>();
+    for (const post of Object.values(posts)) {
+      if (post.delete_at || post.create_at < startTimeUtc || post.create_at >= endTimeUtc) continue;
+      if (post.root_id && !posts[post.root_id] && !roots.has(post.root_id)) {
+        roots.set(post.root_id, (await this.getPost(post.root_id)).post);
+      }
+      const root = posts[post.root_id || post.id] ?? roots.get(post.root_id || post.id);
+      // A recent reply may have an old, restricted root outside the collected page.
+      if (!root || root.delete_at || root.channel_id !== channelId) continue;
       const rootMessage = root?.message?.trimStart() ?? "";
       if (rootMessage.startsWith("🈲") || rootMessage.startsWith("🚫")) continue;
       const reactions = await this.getReactions(post.id);
@@ -323,16 +336,40 @@ export class MattermostClient {
     });
   }
 
-  async uploadSummaryFile(bytes: Uint8Array): Promise<string> {
+  async findVideoSummary(date: string): Promise<MattermostPost | null> {
+    // Reconcile a lost POST response before retrying. Fail closed if lookup fails.
+    const bot = await this.request<MattermostUser>("/api/v4/users/me");
+    for (let page = 0; page < 50; page += 1) {
+      const data = await this.request<{ order: string[]; posts: Record<string, MattermostPost> }>(
+        `/api/v4/channels/${encodeURIComponent(this.summaryChannelId)}/posts?per_page=100&page=${page}`,
+      );
+      const posts = data.order.map((id) => data.posts[id]).filter(Boolean);
+      const found = posts.find((post) => !post.delete_at && post.user_id === bot.id && post.props?.summary_video_date === date);
+      if (found) return found;
+      if (posts.length < 100) return null;
+    }
+    throw new Error("Video post reconciliation exceeded its page limit");
+  }
+
+  async postVideoSummary(date: string, message: string, fileId: string) {
+    return await this.request<MattermostPost>("/api/v4/posts", {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ channel_id: this.summaryChannelId, message, file_ids: [fileId],
+        props: { summary_video_date: date }, pending_post_id: `summary-video-${date}` }),
+    });
+  }
+
+  async uploadSummaryFile(
+    bytes: Uint8Array,
+    file: { name: string; type: string } = { name: "channel-summary.png", type: "image/png" },
+  ): Promise<string> {
     const form = new FormData();
     form.append("channel_id", this.summaryChannelId);
-    const arrayBuffer = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer;
-    form.append("files", new Blob([arrayBuffer], { type: "image/png" }), "channel-summary.png");
+    form.append("files", new Blob([bytes as Uint8Array<ArrayBuffer>], { type: file.type }), file.name);
     const response = await fetch(`${this.baseUrl}/api/v4/files`, {
       method: "POST",
+      signal: AbortSignal.timeout(60_000),
       headers: this.headers(),
       body: form,
     });
