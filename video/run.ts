@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { parseArgs } from "node:util";
 import { addCalendarDays, jstDate } from "../src/domain/date";
-import { createVideoRenderer } from "./export";
+import { createVideoRenderer, snapshotTimes } from "./export";
 import { demoPlan, demoAudio } from "./sample";
+import { customEmojiName } from "./emoji";
 import type { VideoPlan } from "./types";
 
 const { values } = parseArgs({ options: {
@@ -29,6 +30,35 @@ async function api(path: string, init: RequestInit = {}) {
   return await response.json() as any;
 }
 
+async function image(path: string) {
+  try {
+    const response = await fetch(`${endpoint}${path}`, { headers: { Authorization: `Bearer ${secret}` },
+      redirect: "error", signal: AbortSignal.timeout(30_000) });
+    const type = response.headers.get("Content-Type") ?? "";
+    if (!response.ok || !/^image\/(png|jpeg|gif|webp)$/.test(type)) { await response.body?.cancel(); return null; }
+    return `data:${type};base64,${Buffer.from(await response.arrayBuffer()).toString("base64")}`;
+  } catch { return null; }
+}
+
+// Avatars and custom emoji come through the Worker (it holds the Mattermost token);
+// missing ones fall back to initials / a sparkle.
+async function images(plan: VideoPlan) {
+  const jobs = [
+    ...new Set([...plan.posts.map((post) => post.userId), ...plan.stars.map((star) => star.userId)]),
+  ].map((id) => ({ key: id, path: `/avatar/${id}` }));
+  const customs = new Set(plan.posts.flatMap((post) => post.reactions.map((r) => customEmojiName(r.emoji))).filter((n): n is string => !!n));
+  for (const name of customs) jobs.push({ key: `:${name}:`, path: `/emoji/${encodeURIComponent(name)}` });
+  const out: Record<string, string> = {};
+  for (let i = 0; i < jobs.length; i += 6) {
+    await Promise.all(jobs.slice(i, i + 6).map(async ({ key, path }) => {
+      const url = await image(path);
+      if (url) out[key] = url;
+    }));
+  }
+  console.log(`Images ${Object.keys(out).length}/${jobs.length} prepared`);
+  return out;
+}
+
 async function main() {
   const prepared = values.demo ? { status: "ready", plan: demoPlan(date) } : await api("/prepare", { method: "POST" });
   if (prepared.status !== "ready") { console.log(JSON.stringify({ date, status: prepared.status, postId: prepared.postId })); return; }
@@ -38,18 +68,21 @@ async function main() {
   await mkdir(resolve(output, ".."), { recursive: true });
   const renderer = await createVideoRenderer(directory);
   try {
+    const faces = values.demo ? {} : await images(plan);
     const audio: string[] = [];
     // Sequential requests keep Gemini quota usage bounded and storyboard edits consistent.
     for (let index = 0; index < plan.scenes.length; index += 1) {
-      const result = values.demo ? { audio: demoAudio(), narration: plan.scenes[index].narration } :
+      const result = values.demo ? { audio: demoAudio([...plan.scenes[index].narration].length / 7), narration: plan.scenes[index].narration } :
         await api(`/audio/${index}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       audio.push(result.audio);
       plan.scenes[index].narration = result.narration;
       console.log(`Narration ${index + 1}/${plan.scenes.length} prepared`);
     }
+    let duration = 0;
     for (let attempt = 0; ; attempt += 1) {
-      const { tooLong } = await renderer.prepare(plan, audio);
-      if (!tooLong.length) break;
+      const prepared = await renderer.prepare(plan, audio, faces);
+      const tooLong = prepared.tooLong;
+      if (!tooLong.length) { duration = prepared.duration!; break; }
       if (attempt >= 2 || values.demo) throw new Error("Narration could not fit without cutting speech");
       for (const clip of tooLong) {
         const text = plan.scenes[clip.index].narration;
@@ -60,15 +93,29 @@ async function main() {
       }
     }
     const rendered = join(directory, "summary.mp4");
-    await renderer.export(rendered);
+    await renderer.export(rendered, duration);
     await copyFile(rendered, output);
-    if (values.demo) for (const time of [1, 5, 17, 33, 49, 59]) {
+    if (values.demo) for (const time of snapshotTimes(duration)) {
       await copyFile(join(directory, `frame-${time}.jpg`), join(resolve(output, ".."), `frame-${time}.jpg`));
     }
-    console.log(`Verified 60-second H.264/AAC video: ${output}`);
+    console.log(`Verified ${duration}-second H.264/AAC video: ${output}`);
     if (values.post) {
-      const result = await api("/publish", { method: "PUT", headers: { "Content-Type": "video/mp4" }, body: new Uint8Array(await readFile(output)) });
-      console.log(JSON.stringify({ date, status: result.status, postId: result.postId }));
+      const body = new Uint8Array(await readFile(output));
+      // The text summary starts at the same time; wait up to 20 minutes for its thread.
+      for (let attempt = 0; ; attempt += 1) {
+        const response = await fetch(`${endpoint}/publish`, { method: "PUT", body, redirect: "error",
+          headers: { Authorization: `Bearer ${secret}`, "Content-Type": "video/mp4" }, signal: AbortSignal.timeout(240_000) });
+        if (response.status === 425 && attempt < 20) {
+          await response.body?.cancel();
+          console.log("Waiting for the daily summary post…");
+          await new Promise((resolve) => setTimeout(resolve, 60_000));
+          continue;
+        }
+        if (!response.ok) throw new Error(`Video API /publish failed (${response.status}); inspect Worker status (private content omitted)`);
+        const result = await response.json() as { status: string; postId: string };
+        console.log(JSON.stringify({ date, status: result.status, postId: result.postId }));
+        break;
+      }
     }
   } finally { await renderer.close(); await rm(directory, { recursive: true, force: true }); }
 }

@@ -34,8 +34,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - name: Install Japanese fonts
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Install Japanese and emoji fonts
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
       - name: Render and optionally post
         env:
           VIDEO_API_URL: ${{ vars.VIDEO_API_URL || 'https://mattermost-automation.ukkaripon.workers.dev' }}

@@ -4,9 +4,11 @@ import type { Env } from "../env";
 import { secureEqual } from "./slash";
 import { addCalendarDays, jstDate } from "../domain/date";
 import { MattermostClient } from "../mattermost";
+import { workflowId } from "./admin";
 import { collectVideoSource } from "../../video/source";
 import { directSummary, shortenNarration, synthesize } from "../../video/gemini";
-import type { GeminiConfig, VideoPlan } from "../../video/types";
+import { customEmojiName } from "../../video/emoji";
+import { PLAN_VERSION, type GeminiConfig, type VideoPlan } from "../../video/types";
 
 function db(env: Env) {
   return createClient({ url: env.TURSO_DATABASE_URL, authToken: env.TURSO_AUTH_TOKEN });
@@ -62,12 +64,22 @@ export function validVideoDate(value: string, now = new Date()): boolean {
 }
 
 export function videoMessage(plan: VideoPlan): string {
-  const used = [...new Set(plan.scenes.map((scene) => scene.source))];
-  // Keep model text out of Markdown mentions/links; URLs come only from source collection.
-  const plain = (text: string) => text.replace(/[@\[\]()*_`~<>\\]/g, "");
-  return `🎬 **${plan.date} の Mattermost 1分まとめ**\n${plain(plan.headline)}\n\n` +
-    used.map((index) => `[${plain(plan.sources[index].name)}](${plan.sources[index].url})`).join(" · ") +
-    "\n\n日本語音声・字幕付き／AI生成ナレーション（Gemini）";
+  // Title only. Keep model text out of Markdown, mentions, links and headings.
+  const plain = (text: string) => text.replace(/[@#\[\]()*_`~<>|\\]|https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  const title = plain(plan.title ?? "") || plain(plan.headline);
+  return /\p{Extended_Pictographic}/u.test(title) ? title : `🎬 ${title}`;
+}
+
+// The daily text + image summary is posted by the `summary-<date>` workflow; the video joins its thread.
+async function summaryPostId(env: Env, date: string): Promise<string | null> {
+  try {
+    const status = await (await env.DAILY_SUMMARY_WORKFLOW.get(workflowId(date))).status();
+    const output = typeof status.output === "string" ? JSON.parse(status.output) : status.output;
+    const postId = (output as { postId?: unknown } | undefined)?.postId;
+    return status.status === "complete" && typeof postId === "string" ? postId : null;
+  } catch {
+    return null;
+  }
 }
 
 export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
@@ -104,7 +116,9 @@ export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
       await client.execute({ sql: "UPDATE summary_videos SET status = 'ready' WHERE run_id = ? AND status = 'publishing' AND updated_at = ?", args: [key, row.updated_at] });
     }
     const cached = await loadPlan(client, key);
-    if (cached) return c.json({ status: "ready", plan: cached });
+    if (cached?.version === PLAN_VERSION) return c.json({ status: "ready", plan: cached });
+    // A storyboard from a previous format lacks fields the renderer needs; direct it again.
+    if (cached) await client.execute({ sql: "UPDATE summary_videos SET plan_json = NULL WHERE run_id = ? AND status = 'ready'", args: [key] });
     const gemini = config(c.env);
     const source = await collectVideoSource(c.env, date);
     if (!source.channels.length) return c.json({ status: "no-updates" });
@@ -143,6 +157,27 @@ export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
     return c.json({ audio: await synthesize(gemini, scene.narration), narration: scene.narration });
   });
 
+  app.get("/admin/summary-video/:date/avatar/:userId", async (c) => {
+    const plan = await loadPlan(db(c.env), runKey(c.env, c.req.param("date")));
+    const userId = c.req.param("userId");
+    // Only people who appear in this storyboard; the renderer has no Mattermost token.
+    const people = new Set([...(plan?.posts ?? []).map((post) => post.userId), ...(plan?.stars ?? []).map((star) => star.userId)]);
+    if (!/^[a-z0-9]{26}$/.test(userId) || !people.has(userId)) return c.json({ error: "Avatar not found" }, 404);
+    const image = await new MattermostClient(c.env).fetchUserImage(userId);
+    if (!image) return c.json({ error: "Avatar not found" }, 404);
+    return new Response(image.bytes, { headers: { "Content-Type": image.type, "Cache-Control": "no-store" } });
+  });
+
+  app.get("/admin/summary-video/:date/emoji/:name", async (c) => {
+    const plan = await loadPlan(db(c.env), runKey(c.env, c.req.param("date")));
+    const name = c.req.param("name");
+    const used = new Set((plan?.posts ?? []).flatMap((post) => post.reactions.map((reaction) => customEmojiName(reaction.emoji))));
+    if (!customEmojiName(`:${name}:`) || !used.has(name)) return c.json({ error: "Emoji not found" }, 404);
+    const image = await new MattermostClient(c.env).fetchCustomEmojiImage(name);
+    if (!image) return c.json({ error: "Emoji not found" }, 404);
+    return new Response(image.bytes, { headers: { "Content-Type": image.type, "Cache-Control": "no-store" } });
+  });
+
   app.put("/admin/summary-video/:date/publish", async (c) => {
     if (c.env.DRY_RUN === "true") return c.json({ error: "Posting is disabled in DRY_RUN" }, 403);
     if (c.req.header("Content-Type") !== "video/mp4") return c.json({ error: "Expected video/mp4" }, 415);
@@ -151,6 +186,9 @@ export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
     if (saved?.status === "posted") return c.json({ status: "posted", postId: saved.post_id });
     const plan = await loadPlan(client, key);
     if (!plan) return c.json({ error: "Prepare a storyboard first" }, 409);
+    // In test-channel mode the video stands alone; in production it must reply to the summary thread.
+    const rootId = c.env.VIDEO_TEST_CHANNEL ? undefined : await summaryPostId(c.env, date);
+    if (!c.env.VIDEO_TEST_CHANNEL && !rootId) return c.json({ error: "Daily summary is not posted yet" }, 425);
     const bytes = new Uint8Array(await c.req.arrayBuffer());
     if (bytes.length > 40 * 1024 * 1024 || bytes.length < 12 ||
       new TextDecoder().decode(bytes.slice(4, 8)) !== "ftyp") return c.json({ error: "Invalid MP4 (maximum 40 MiB)" }, 400);
@@ -170,7 +208,7 @@ export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
       const fileId = typeof previous?.file_id === "string" ? previous.file_id :
         await mm.uploadSummaryFile(bytes, { name: `mattermost-${date}.mp4`, type: "video/mp4" });
       await client.execute({ sql: "UPDATE summary_videos SET file_id = ? WHERE run_id = ? AND claim_token = ?", args: [fileId, key, token] });
-      post = await mm.postVideoSummary(date, videoMessage(plan), fileId);
+      post = await mm.postVideoSummary(date, videoMessage(plan), fileId, rootId ?? undefined);
     }
     await client.execute({ sql: "UPDATE summary_videos SET status = 'posted', post_id = ?, plan_json = NULL WHERE run_id = ? AND claim_token = ?",
       args: [post.id, key, token] });
