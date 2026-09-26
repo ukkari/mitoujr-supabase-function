@@ -11,6 +11,8 @@ export type MattermostPost = {
   delete_at?: number;
   type?: string;
   props?: Record<string, unknown>;
+  reply_count?: number;
+  reactions?: MattermostReaction[];
 };
 export type MattermostReaction = { user_id: string; emoji_name: string };
 export type MattermostChannel = {
@@ -242,6 +244,7 @@ export class MattermostClient {
     channelId: string,
     startTimeUtc: number,
     endTimeUtc: number,
+    { appendReactions = true }: { appendReactions?: boolean } = {},
   ): Promise<MattermostPost[]> {
     if (await this.isRestrictedChannel(channelId)) return [];
     const posts: Record<string, MattermostPost> = {};
@@ -267,7 +270,8 @@ export class MattermostClient {
       const rootMessage = root?.message?.trimStart() ?? "";
       if (rootMessage.startsWith("🈲") || rootMessage.startsWith("🚫")) continue;
       const reactions = await this.getReactions(post.id);
-      if (reactions.length > 0) {
+      post.reactions = reactions;
+      if (appendReactions && reactions.length > 0) {
         const formatted = await Promise.all(reactions.map(async (reaction) =>
           `:${reaction.emoji_name}: by @${await this.fetchUsername(reaction.user_id)}`
         ));
@@ -290,6 +294,33 @@ export class MattermostClient {
       return username;
     } catch {
       return "unknown";
+    }
+  }
+
+  private async fetchImage(path: string): Promise<{ bytes: ArrayBuffer; type: string } | null> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      headers: { Authorization: `Bearer ${this.token}`, Accept: "image/*" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const type = response.headers.get("Content-Type")?.split(";")[0].trim() ?? "";
+    if (!response.ok || !/^image\/(png|jpeg|gif|webp)$/.test(type)) {
+      await response.body?.cancel();
+      return null;
+    }
+    const bytes = await response.arrayBuffer();
+    return bytes.byteLength > 0 && bytes.byteLength <= 2 * 1024 * 1024 ? { bytes, type } : null;
+  }
+
+  async fetchUserImage(userId: string): Promise<{ bytes: ArrayBuffer; type: string } | null> {
+    return await this.fetchImage(`/api/v4/users/${encodeURIComponent(userId)}/image`);
+  }
+
+  async fetchCustomEmojiImage(name: string): Promise<{ bytes: ArrayBuffer; type: string } | null> {
+    try {
+      const emoji = await this.request<{ id?: string }>(`/api/v4/emoji/name/${encodeURIComponent(name)}`);
+      return typeof emoji.id === "string" ? await this.fetchImage(`/api/v4/emoji/${encodeURIComponent(emoji.id)}/image`) : null;
+    } catch {
+      return null;
     }
   }
 
@@ -351,11 +382,12 @@ export class MattermostClient {
     throw new Error("Video post reconciliation exceeded its page limit");
   }
 
-  async postVideoSummary(date: string, message: string, fileId: string) {
+  async postVideoSummary(date: string, message: string, fileId: string, rootId?: string) {
     return await this.request<MattermostPost>("/api/v4/posts", {
       method: "POST",
       headers: this.headers(true),
       body: JSON.stringify({ channel_id: this.summaryChannelId, message, file_ids: [fileId],
+        ...(rootId ? { root_id: rootId } : {}),
         props: { summary_video_date: date }, pending_post_id: `summary-video-${date}` }),
     });
   }
