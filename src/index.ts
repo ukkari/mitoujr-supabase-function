@@ -9,6 +9,7 @@ import {
 } from "./routes/admin";
 import { registerSlashRoutes } from "./routes/slash";
 import { SummaryRunRepository } from "./db";
+import { cleanupVideoPlans, registerVideoRoutes } from "./routes/video";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -19,6 +20,7 @@ app.use("*", async (context, next) => {
 
 registerSlashRoutes(app);
 registerAdminRoutes(app);
+registerVideoRoutes(app);
 
 app.notFound((context) => context.json({ error: "Not found" }, 404));
 app.onError((error, context) => {
@@ -33,6 +35,7 @@ export default {
     await SummaryRunRepository.fromEnv(env).cleanupExpired(
       new Date(controller.scheduledTime),
     );
+    await cleanupVideoPlans(env, new Date(controller.scheduledTime));
     if (controller.cron === "0 15 * * *") {
       const result = await runReminderCron(env, new Date(controller.scheduledTime));
       console.log("Reminder cron completed", {

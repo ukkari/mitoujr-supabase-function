@@ -1,0 +1,53 @@
+name: Daily Mattermost summary video
+
+on:
+  schedule:
+    - cron: '0 22 * * *' # 07:00 JST; summarize the previous JST calendar day
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'JST date YYYY-MM-DD (empty = yesterday; last 7 days only)'
+        type: string
+      post:
+        description: 'Attach the completed MP4 to the Mattermost summary channel'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mattermost-summary-video
+  cancel-in-progress: false
+
+jobs:
+  video:
+    if: github.event_name == 'workflow_dispatch' || vars.SUMMARY_VIDEO_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Install Japanese fonts
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Render and optionally post
+        env:
+          VIDEO_API_URL: ${{ vars.VIDEO_API_URL || 'https://mattermost-automation.ukkaripon.workers.dev' }}
+          VIDEO_RUNNER_SECRET: ${{ secrets.VIDEO_RUNNER_SECRET }}
+          TARGET_DATE: ${{ inputs.date }}
+          POST_VIDEO: ${{ github.event_name == 'schedule' || inputs.post }}
+        run: |
+          args=()
+          if [ -n "$TARGET_DATE" ]; then args+=(--date "$TARGET_DATE"); fi
+          if [ "$POST_VIDEO" = "true" ]; then args+=(--post); fi
+          npm run video -- "${args[@]}"
+      # Mattermost content must not become a public Actions artifact.
+      - name: Remove rendered content
+        if: always()
+        run: rm -rf dist/video

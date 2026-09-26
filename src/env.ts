@@ -48,6 +48,12 @@ export interface Env {
   OPENAI_API_KEY: string;
   OPENAI_TEXT_MODEL: string;
   OPENAI_IMAGE_MODEL: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
+  GEMINI_TTS_MODEL?: string;
+  GEMINI_VOICE?: string;
+  VIDEO_RUNNER_SECRET?: string;
+  VIDEO_TEST_CHANNEL?: string;
   ADMIN_TRIGGER_SECRET: string;
   DRY_RUN?: string;
   DAILY_SUMMARY_WORKFLOW: WorkflowBinding;
