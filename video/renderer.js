@@ -7,6 +7,7 @@ import { TRANSITION } from './vendor/placereel/fx/transition.js';
 import { renderSoundtrack } from './vendor/placereel/audio.js';
 import { timeStretch } from './vendor/placereel/voice.js';
 import { createPostStyles } from './post-styles.js';
+import { createHeadingStyles } from './heading-styles.js';
 
 const canvas = document.querySelector('canvas');
 const font = '"Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
@@ -267,6 +268,10 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
   const postStyles = createPostStyles({ K, X, W, H, plan, posts, seed, col, rr, face, emo });
   const styleOrder = options.styles?.length ? options.styles : postStyles.order();
   const styleOf = (i) => styleOrder[i % styleOrder.length];
+  // Headings get their own entrance/effect per scene (-1 is the hook headline), also shuffled per day.
+  const headingStyles = createHeadingStyles({ K, X, W, col, seed });
+  const headingOrder = options.headings?.length ? options.headings : headingStyles.order();
+  const headingOf = (i) => headingOrder[(i + 1) % headingOrder.length];
 
   function background(t, i, list) {
     const c = K.ctx, k = kickEnv(t);
@@ -313,7 +318,7 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
       c.translate(W / 2, cy); c.rotate(-0.035);
       const s = lerp(2.6, 1, E.outBack(p, 1.8)) * (1 + 0.03 * kickEnv(t));
       c.scale(s, s); c.translate(-W / 2, -cy);
-      popText(lay, M, top, 1);
+      headingStyles.draw(headingOf(-1), lay, M, top, t, t, -1);
       c.restore();
     }
     const st = plan.stats;
@@ -440,7 +445,7 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
     const top = X(385), cy = top + lay.lines.length * lay.lineH / 2, pulse = 1 + 0.03 * kickEnv(t);
     c.save();
     c.translate(W / 2, cy); c.scale(pulse, pulse); c.translate(-W / 2, -cy);
-    popText(lay, M, top, tau, { start: 0.08, hl: k0 >= 0 ? [k0, k0 + s.keyword.length] : null });
+    headingStyles.draw(headingOf(i), lay, M, top, tau, t, i, { hl: k0 >= 0 ? [k0, k0 + s.keyword.length] : null });
     c.restore();
     // Giant topic emoji smashes in, then parks top-right and bounces on the beat.
     const e1 = E.outBack(seg(tau, 0, 0.2), 2.4), m = E.inOutCubic(seg(tau, 0.3, 0.5));
@@ -614,7 +619,7 @@ function wav(buffer) {
   return out;
 }
 
-// `options.styles` pins the post style of each scene (for previews); normally they are shuffled per day.
+// `options.styles` / `options.headings` pin the post / heading style of each scene (for previews); normally they are shuffled per day.
 window.prepareVideo = async (plan, audio, avatars = {}, options = {}) => {
   await document.fonts.ready;
   const roll = rollCall(plan);
@@ -638,3 +643,4 @@ window.prepareVideo = async (plan, audio, avatars = {}, options = {}) => {
 };
 window.renderFrame = t => { render(t); return canvas.toDataURL('image/jpeg', .9).split(',')[1]; };
 window.postStyleIds = () => Object.keys(createPostStyles({ K: {}, X: (v) => v, plan: {}, posts: [], seed: 0 }).STYLES);
+window.headingStyleIds = () => Object.keys(createHeadingStyles({ K: {}, X: (v) => v, seed: 0 }).STYLES);
