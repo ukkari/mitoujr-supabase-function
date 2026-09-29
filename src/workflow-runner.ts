@@ -9,6 +9,7 @@ import {
   generateTextSummary,
   prepareSummaryCollection,
 } from "./summary";
+import { dispatchSummaryVideo } from "./video-dispatch";
 
 type StepOptions = {
   retries: {
@@ -46,6 +47,7 @@ export type WorkflowRunnerDependencies = {
   generateText: typeof generateTextSummary;
   generateImage: typeof generateSummaryImage;
   pendingPostId: typeof stablePendingPostId;
+  dispatchVideo: typeof dispatchSummaryVideo;
 };
 
 function defaultDependencies(env: Env): WorkflowRunnerDependencies {
@@ -57,6 +59,7 @@ function defaultDependencies(env: Env): WorkflowRunnerDependencies {
     generateText: generateTextSummary,
     generateImage: generateSummaryImage,
     pendingPostId: stablePendingPostId,
+    dispatchVideo: dispatchSummaryVideo,
   };
 }
 
@@ -196,6 +199,23 @@ export async function runDailySummaryWorkflow(
     },
   );
   await clearTemporaryContent(step, repository, instanceId);
+  if (params.requestedBy === "cron") {
+    try {
+      await step.do(
+        "dispatch-summary-video",
+        { retries: { limit: 3, delay: "15 seconds", backoff: "exponential" } },
+        async () => {
+          const result = await dependencies.dispatchVideo(env, inputMetadata.targetDateJst);
+          return { targetDateJst: inputMetadata.targetDateJst, ...result };
+        },
+      );
+    } catch (error) {
+      // The text/image summary must remain complete so the video can attach to its thread.
+      console.error("Summary video dispatch failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   return published;
 }
 

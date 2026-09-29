@@ -1,8 +1,6 @@
 name: Daily Mattermost summary video
 
 on:
-  schedule:
-    - cron: '0 22 * * *' # 07:00 JST; summarize the previous JST calendar day
   workflow_dispatch:
     inputs:
       date:
@@ -10,6 +8,10 @@ on:
         type: string
       post:
         description: 'Attach the completed MP4 to the Mattermost summary channel'
+        type: boolean
+        default: false
+      automatic:
+        description: 'Started by Cloudflare after the daily summary is posted'
         type: boolean
         default: false
 
@@ -22,7 +24,7 @@ concurrency:
 
 jobs:
   video:
-    if: github.event_name == 'workflow_dispatch' || vars.SUMMARY_VIDEO_ENABLED == 'true'
+    if: inputs.automatic != true || vars.SUMMARY_VIDEO_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -41,7 +43,7 @@ jobs:
           VIDEO_API_URL: ${{ vars.VIDEO_API_URL || 'https://mattermost-automation.ukkaripon.workers.dev' }}
           VIDEO_RUNNER_SECRET: ${{ secrets.VIDEO_RUNNER_SECRET }}
           TARGET_DATE: ${{ inputs.date }}
-          POST_VIDEO: ${{ github.event_name == 'schedule' || inputs.post }}
+          POST_VIDEO: ${{ inputs.post }}
         run: |
           args=()
           if [ -n "$TARGET_DATE" ]; then args+=(--date "$TARGET_DATE"); fi

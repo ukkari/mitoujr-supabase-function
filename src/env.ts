@@ -54,6 +54,7 @@ export interface Env {
   GEMINI_VOICE?: string;
   VIDEO_RUNNER_SECRET?: string;
   VIDEO_TEST_CHANNEL?: string;
+  GITHUB_VIDEO_DISPATCH_TOKEN?: string;
   ADMIN_TRIGGER_SECRET: string;
   DRY_RUN?: string;
   DAILY_SUMMARY_WORKFLOW: WorkflowBinding;

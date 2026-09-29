@@ -137,14 +137,24 @@ staging の `DRY_RUN=true` は変更しない。`--post` のない実行でもGe
 
 GitHub の `Daily Mattermost summary video` は手動起動できる。手動起動の `post` は
 既定で `false`。実データを含むMP4・音声・台本はActions artifactへアップロードしない。
-確認が終わったらリポジトリ変数を有効にする。
+自動起動は GitHub の定期スケジュールではなく、07:00 JST に Cloudflare Cron から
+始まる文章・画像まとめ Workflow が、Mattermost への投稿と一時本文の消去を終えた後に
+GitHub の `workflow_dispatch` API を呼ぶ。対象日は Workflow の前日 JST 日付を明示する。
+更新がない日、手動起動、DRY_RUN では動画ジョブを起動しない。
+
+Worker secret `GITHUB_VIDEO_DISPATCH_TOKEN` には、このリポジトリだけに限定した
+fine-grained token（Repository permissions: Actions = Read and write）を設定する。
+値はリポジトリやログへ書かず、`npx wrangler secret put GITHUB_VIDEO_DISPATCH_TOKEN`
+で登録する。動画起動 API が失敗しても文章・画像まとめは成功状態を維持し、
+Cloudflare の `dispatch-summary-video` ステップとログで失敗を確認できる。
+自動動画を有効にするリポジトリ変数は次のとおり。
 
 ```bash
 gh variable set SUMMARY_VIDEO_ENABLED --body true --repo ukkari/mitoujr-supabase-function
 ```
 
-変更がデフォルトブランチに入ると、翌朝7時の自動起動対象になる。
-停止は `SUMMARY_VIDEO_ENABLED=false`。既存の文章まとめのCronは独立している。
+変更がデフォルトブランチに入ると、翌朝7時のまとめ完了後に自動起動する。
+停止は `SUMMARY_VIDEO_ENABLED=false`。既存の文章まとめの Cron はそのまま動く。
 
 ## 再実行・データ保持
 
