@@ -1,5 +1,6 @@
-// Renders stills of every post style from the demo data (no secrets, no audio export).
-// npx tsx video/preview-styles.ts [outDir] [style,style,...]
+// Renders stills of every post style (or, with `headings`, every heading style) from the demo data
+// (no secrets, no audio export).
+// npx tsx video/preview-styles.ts [outDir] [style,style,...|headings]
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -29,7 +30,9 @@ const page = await browser.newPage({ viewport: { width: 720, height: 1280 } });
 page.on("pageerror", (e) => console.error(e));
 await page.goto(`http://127.0.0.1:${(server.address() as any).port}`);
 await page.waitForFunction(() => typeof window.prepareVideo === "function");
-const styles: string[] = process.argv[3]?.split(",") ?? await page.evaluate(() => window.postStyleIds());
+const headings = process.argv[3] === "headings";
+const styles: string[] = headings ? await page.evaluate(() => window.headingStyleIds())
+  : process.argv[3]?.split(",") ?? await page.evaluate(() => window.postStyleIds());
 await mkdir(out, { recursive: true });
 const counts = [3, 6, 1, 4, 2, 5];
 const source = demoSource("2026-09-25"), base = demoDirection();
@@ -39,11 +42,13 @@ for (let from = 0; from < styles.length; from += 12) {
     posts: Array.from({ length: counts[(from + k) % counts.length] }, (_, n) => ({ id: (k * 5 + n * 3) % 14, quote: "" })) })) };
   const plan = validatePlan(raw, source);
   const audio = plan.scenes.map(() => demoAudio(3));
-  const r = await page.evaluate(([p, a, s]) => window.prepareVideo(p, a, {}, { styles: s }), [plan, audio, batch] as const);
+  const options = headings ? { headings: ["pop", ...batch] } : { styles: batch };
+  const r = await page.evaluate(([p, a, o]) => window.prepareVideo(p, a, {}, o), [plan, audio, options] as const);
   if (r.tooLong?.length) throw new Error("too long");
   for (const [k, name] of batch.entries()) {
     const [start, end] = r.scenes[k];
-    for (const [tag, t] of [["in", start + 0.45], ["end", end - 0.1]] as const) {
+    const times: Array<[string, number]> = headings ? [["in", start + 0.2], ["end", start + 1.3]] : [["in", start + 0.45], ["end", end - 0.1]];
+    for (const [tag, t] of times) {
       const data = await page.evaluate((t) => window.renderFrame(t), t);
       await writeFile(join(out, `${String(from + k + 1).padStart(2, "0")}-${name}-${tag}.jpg`), Buffer.from(data, "base64"));
     }
