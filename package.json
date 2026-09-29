@@ -5,6 +5,7 @@
   "scripts": {
     "video": "tsx video/run.ts",
     "video:demo": "tsx video/run.ts --demo",
+    "video:styles": "tsx video/preview-styles.ts",
     "dev": "wrangler dev",
     "test": "vitest run",
     "test:watch": "vitest",
