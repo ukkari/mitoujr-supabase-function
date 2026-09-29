@@ -23,6 +23,11 @@ describe("Japanese video direction", () => {
     expect(plan.sources[1]).toMatchObject({ name: "デモ・開発相談", posts: 5, people: 4, top: "sora".padEnd(26, "0") });
     expect(JSON.stringify(plan)).not.toContain("後で貼ります");
   });
+  it("keeps up to six posts per scene so the screen can be filled", () => {
+    const raw = demoDirection();
+    raw.scenes[0].posts = Array.from({ length: 8 }, (_, id) => ({ id, quote: "" }));
+    expect(validatePlan(raw, source).scenes[0].posts).toHaveLength(6);
+  });
   it("rejects invented source indices and overlong narration", () => {
     const raw = demoDirection();
     raw.scenes[0].source = 100;

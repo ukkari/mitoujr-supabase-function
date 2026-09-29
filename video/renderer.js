@@ -6,6 +6,7 @@ import { overdrive, overdriveTilt } from './vendor/placereel/fx/overdrive.js';
 import { TRANSITION } from './vendor/placereel/fx/transition.js';
 import { renderSoundtrack } from './vendor/placereel/audio.js';
 import { timeStretch } from './vendor/placereel/voice.js';
+import { createPostStyles } from './post-styles.js';
 
 const canvas = document.querySelector('canvas');
 const font = '"Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
@@ -119,7 +120,7 @@ function cueSheet(plan) {
 
 const hashStr = (s) => [...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
 
-function makeRenderer(plan, speech, faces, cues, duration, roll) {
+function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
   const seed = Number(plan.date.replaceAll('-', ''));
   const model = { seed, place: { title: '未踏ジュニア', score: 0 }, keywords: plan.scenes.map(s => ({ word: s.keyword })) };
   const K = createKit(canvas, model, { photos: [], palette: pickPalette([], '', plan.accent) }, { type: 'modern' });
@@ -263,6 +264,10 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     c.strokeStyle = ring; c.lineWidth = X(6); c.stroke();
   }
 
+  const postStyles = createPostStyles({ K, X, W, H, plan, posts, seed, col, rr, face, emo });
+  const styleOrder = options.styles?.length ? options.styles : postStyles.order();
+  const styleOf = (i) => styleOrder[i % styleOrder.length];
+
   function background(t, i, list) {
     const c = K.ctx, k = kickEnv(t);
     K.fill(K.gradient([[0, pal.hsl(hue(i), 60, 9)], [1, pal.hsl(hue(i) + 40, 70, 17)]], 0, 0, W, H));
@@ -275,6 +280,7 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     });
     c.restore();
     wallpaper(t, i, list);
+    if (i >= 0 && i < N) postStyles.wall(t, i);
   }
 
   function confetti(t, t0, n, s) {
@@ -442,30 +448,13 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
       emo(list[0], lerp(W / 2, W - X(118), m), lerp(H * 0.48, X(210), m) - kickEnv(t, 10) * X(18) * m,
         lerp(X(620), X(150), m) * e1 * (1 + 0.12 * kickEnv(t) * m), lerp(-0.5 * (1 - e1), 0.14 * Math.sin(t * 5), m));
     }
-    // Original post cards, stacked, each slammed in from alternating sides.
-    const n = cue.cards.length, spots = [];
-    if (n) {
-      const area = [X(670), X(1800)], gap = X(44);
-      const h = Math.min(X(330), (area[1] - area[0] - gap * (n - 1)) / n);
-      const y0 = area[0] + (area[1] - area[0] - (n * h + (n - 1) * gap)) / 2;
-      const latest = cue.cards.reduce((mx, card, j) => (t >= card.at ? j : mx), -1);
-      cue.cards.forEach((card, j) => {
-        const since = t - card.at;
-        const w = W - 2 * M, y = y0 + j * (h + gap);
-        spots.push({ card, x: M, y, w, h });
-        if (since < 0) return;
-        const e = E.outBack(seg(since, 0, 0.28), 1.6), dir = j % 2 ? 1 : -1;
-        const x = M + (1 - e) * dir * W;
-        c.save();
-        c.translate(x + w / 2, y + h / 2);
-        c.rotate(lerp(dir * 0.3, dir * 0.014, e));
-        const s2 = j === latest ? 1 + 0.025 * kickEnv(t, 12) : 1;
-        c.scale(s2, s2);
-        c.translate(-(x + w / 2), -(y + h / 2));
-        postCard(posts[card.id], card, x, y, w, h, t, i, j === latest);
-        c.restore();
-      });
-    }
+    // Original posts, in this scene's presentation style, filling the space under the heading.
+    const areaTop = top + lay.lines.length * lay.lineH + X(44);
+    const latest = cue.cards.reduce((mx, card, j) => (t >= card.at ? j : mx), -1);
+    const spots = postStyles.STYLES[styleOf(i)]({
+      t, i, list, latest, start: s.start, end: s.end, A: { x: M, y: areaTop, w: W - 2 * M, h: X(1820) - areaTop },
+      items: cue.cards.map((card, j) => ({ card, p: posts[card.id], j })),
+    });
     // Emoji on every slam, and reactions streaming up like a live stream.
     spots.forEach(({ card, x, y, w, h }, j) => {
       const p = posts[card.id], own = p.reactions.map(r => r.emoji);
@@ -625,7 +614,8 @@ function wav(buffer) {
   return out;
 }
 
-window.prepareVideo = async (plan, audio, avatars = {}) => {
+// `options.styles` pins the post style of each scene (for previews); normally they are shuffled per day.
+window.prepareVideo = async (plan, audio, avatars = {}, options = {}) => {
   await document.fonts.ready;
   const roll = rollCall(plan);
   const { speech, tooLong, duration } = await prepareAudio(plan, audio, roll.length ? ROLL_LEN : 0);
@@ -638,12 +628,13 @@ window.prepareVideo = async (plan, audio, avatars = {}) => {
     try { faces[id] = await createImageBitmap(await (await fetch(url)).blob()); } catch { /* initials */ }
   }
   const cues = cueSheet(plan);
-  const renderer = makeRenderer(plan, speech, faces, cues, duration, roll);
+  const renderer = makeRenderer(plan, speech, faces, cues, duration, roll, options);
   render = renderer.draw;
   const soundtrack = await renderSoundtrack({ seed: Number(plan.date.replaceAll('-', '')) }, plan.music,
     { energy: ENERGY.dopamine, events: soundEvents(plan, speech, cues, renderer.pops, duration, roll), speech });
   const response = await fetch('/soundtrack', { method: 'POST', body: wav(soundtrack) });
   if (!response.ok) throw new Error('Could not save soundtrack');
-  return { tooLong: [], duration };
+  return { tooLong: [], duration, scenes: plan.scenes.map((s) => [s.start, s.end]) };
 };
 window.renderFrame = t => { render(t); return canvas.toDataURL('image/jpeg', .9).split(',')[1]; };
+window.postStyleIds = () => Object.keys(createPostStyles({ K: {}, X: (v) => v, plan: {}, posts: [], seed: 0 }).STYLES);
