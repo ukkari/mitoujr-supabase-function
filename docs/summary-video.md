@@ -165,6 +165,10 @@ gh variable set SUMMARY_VIDEO_ENABLED --body true --repo ukkari/mitoujr-supabase
 - 管理APIは `/admin/summary-video/:date/prepare`、`/audio/:index`、`/avatar/:userId`、`/publish`。
   Bearer認証必須。対象日は直近7日と当日だけ。
 - 日付ごとに配信状態をTursoへ記録する。投稿済みの日は再生成・再投稿しない。
+- 文章・画像まとめがすでに投稿済みで動画だけ未起動の日は、Cloudflare CLI から
+  `npx wrangler workflows trigger daily-summary-workflow '{"mode":"video-dispatch","targetDateJst":"YYYY-MM-DD","requestedBy":"admin"}' --id video-dispatch-YYYY-MM-DD`
+  で動画だけを起動できる。Workflow は元のまとめが「更新あり」で投稿完了したことを確認し、
+  Mattermost の収集・要約・文章投稿は繰り返さない。同じ instance ID の二重起動は拒否される。
 - 投稿中は10分の占有期間を設ける。応答喪失後はBot自身の
   `props.summary_video_date` を照合してから再試行する。
 - 投稿失敗は成功扱いにしない。占有期間経過後に同じ日を再実行できる。

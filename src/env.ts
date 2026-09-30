@@ -1,10 +1,17 @@
 export type SummaryTarget = "yesterday" | "today";
 
-export type SummaryWorkflowParams = {
-  target: SummaryTarget;
-  targetDateJst: string;
-  requestedBy: "cron" | "admin";
-};
+export type SummaryWorkflowParams =
+  | {
+    target: SummaryTarget;
+    targetDateJst: string;
+    requestedBy: "cron" | "admin";
+    mode?: undefined;
+  }
+  | {
+    mode: "video-dispatch";
+    targetDateJst: string;
+    requestedBy: "admin";
+  };
 
 export type WorkflowStatus = {
   status:

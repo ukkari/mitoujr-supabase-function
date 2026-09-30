@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
+import { jstDate } from "../src/domain/date";
 import {
   runDailySummaryWorkflow,
   type WorkflowRunnerDependencies,
@@ -186,5 +187,40 @@ describe("daily summary workflow", () => {
     vi.mocked(empty.dependencies.collectChannel).mockResolvedValue("");
     await runDailySummaryWorkflow(env, cronParams, "summary-2026-08-30", new RetryingStep(), empty.dependencies);
     expect(empty.dependencies.dispatchVideo).not.toHaveBeenCalled();
+  });
+
+  it("dispatches an already posted summary without collecting or posting it again", async () => {
+    const { dependencies, mattermost } = fixture();
+    const videoEnv = {
+      ...env,
+      DAILY_SUMMARY_WORKFLOW: {
+        get: vi.fn().mockResolvedValue({ status: vi.fn().mockResolvedValue({
+          status: "complete", output: JSON.stringify({ outcome: "posted-with-image", postId: "existing-summary" }),
+        }) }),
+      },
+    } as unknown as Env;
+    const result = await runDailySummaryWorkflow(videoEnv,
+      { mode: "video-dispatch", targetDateJst: jstDate(), requestedBy: "admin" },
+      "video-dispatch-today", new RetryingStep(), dependencies);
+    expect(result).toEqual({ outcome: "video-dispatched", targetDateJst: jstDate(), summaryPostId: "existing-summary", httpStatus: 204 });
+    expect(dependencies.dispatchVideo).toHaveBeenCalledWith(videoEnv, jstDate());
+    expect(dependencies.prepareCollection).not.toHaveBeenCalled();
+    expect(mattermost.postSummaryWithFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses video-only dispatch when the daily summary has no updates", async () => {
+    const { dependencies } = fixture();
+    const videoEnv = {
+      ...env,
+      DAILY_SUMMARY_WORKFLOW: {
+        get: vi.fn().mockResolvedValue({ status: vi.fn().mockResolvedValue({
+          status: "complete", output: { outcome: "no-updates", postId: "no-updates-post" },
+        }) }),
+      },
+    } as unknown as Env;
+    await expect(runDailySummaryWorkflow(videoEnv,
+      { mode: "video-dispatch", targetDateJst: jstDate(), requestedBy: "admin" },
+      "video-dispatch-today", new RetryingStep(), dependencies)).rejects.toThrow("has not posted an update");
+    expect(dependencies.dispatchVideo).not.toHaveBeenCalled();
   });
 });
