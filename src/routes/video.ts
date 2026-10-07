@@ -144,9 +144,13 @@ export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
     const body = await c.req.json<{ maxChars?: number }>().catch(() => ({} as { maxChars?: number }));
     const scene = plan.scenes[index], gemini = config(c.env);
     if (body.maxChars !== undefined) {
-      if (!Number.isInteger(body.maxChars) || body.maxChars < 8 || body.maxChars >= [...scene.narration].length) {
+      if (!Number.isInteger(body.maxChars) || body.maxChars < 8) {
         return c.json({ error: "Invalid shorter narration budget" }, 400);
       }
+    }
+    // A lost response can be retried after the shorter text has already been saved.
+    // Reuse it if it fits the requested budget instead of rejecting the replay.
+    if (body.maxChars !== undefined && body.maxChars < [...scene.narration].length) {
       // Patch only this scene atomically; concurrent audio calls cannot lose edits.
       const shorter = await shortenNarration(gemini, scene.narration, body.maxChars);
       const updated = await client.execute({ sql: "UPDATE summary_videos SET plan_json = json_set(plan_json, ?, ?) WHERE run_id = ? AND status = 'ready' AND expires_at > ?",

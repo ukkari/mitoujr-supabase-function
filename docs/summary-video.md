@@ -162,6 +162,12 @@ gh variable set SUMMARY_VIDEO_ENABLED --body true --repo ukkari/mitoujr-supabase
 
 ## 再実行・データ保持
 
+- 動画ランナーの台本・音声取得は、通信切断・タイムアウト・HTTP 408/429/500/502/503/504 を
+  最大4回再試行する。待機は2・4・8・16秒に最大1秒のjitterを加える。`Retry-After` が
+  あればその時間以上待ち、60秒を超える指定は再試行せず失敗にする。各試行のタイムアウトは4分。
+  ログには処理パス・試行回数・HTTPステータスまたは安全な通信エラーコードだけを残す。
+  音声短縮後の応答を失っても、再送時は保存済みの短い台本を再利用できる。
+  投稿PUTにはこの自動再試行を適用せず、下記の配信状態・占有期間による重複防止を維持する。
 - 管理APIは `/admin/summary-video/:date/prepare`、`/audio/:index`、`/avatar/:userId`、`/publish`。
   Bearer認証必須。対象日は直近7日と当日だけ。
 - 日付ごとに配信状態をTursoへ記録する。投稿済みの日は再生成・再投稿しない。
