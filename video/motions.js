@@ -1,7 +1,7 @@
-// Motion presets on top of PlaceReel's engine. Every topic picks a different combination, so no
-// two scenes move the same way. Each preset still lands on its cue (the sound design is unchanged)
-// and settles within ~0.45 s.
-import { E, seg, lerp, clamp, TAU } from './vendor/placereel/kit.js';
+// Motion presets on top of PlaceReel's engine: cuts, sticker and topic-emoji entrances. Neighbouring
+// scenes pick different ones. Each still lands on its cue (the sound design is unchanged) and settles
+// within ~0.45 s. Posts and headings have their own catalogues (post-styles.js, heading-styles.js).
+import { E, seg, clamp, TAU } from './vendor/placereel/kit.js';
 
 // ---------- cuts: draw(K, p, A, B) like PlaceReel's transitions (p∈[0,1], cut at p=0.5)
 const spin = {
@@ -90,27 +90,6 @@ export const CUT = { spin, push, slices, clock, squash, drop };
 // Every cut gets a different transition (PlaceReel's twelve plus the six above), alternating families.
 export const CUTS = ['band', 'spin', 'zoom', 'slices', 'pixel', 'push', 'whip', 'clock', 'iris',
   'drop', 'flash', 'ink', 'tiles', 'squash', 'swipe', 'doors', 'shutter', 'burn'];
-
-// ---------- post cards: (seconds since the cue, dir = ±1 alternating per card) → pose around the
-// resting spot. dx/dy are in screen widths/heights; every pose ends at { rot: rest(dir) }.
-const rest = (dir) => dir * 0.014;
-export const CARD_IN = [
-  // slam in from alternating sides
-  (since, dir) => { const e = E.outBack(seg(since, 0, 0.28), 1.6); return { dx: (1 - e) * dir, rot: lerp(dir * 0.3, rest(dir), e) }; },
-  // fall from above and bounce
-  (since, dir) => { const e = E.outBounce(seg(since, 0, 0.42)); return { dy: e - 1, rot: lerp(-dir * 0.12, rest(dir), e) }; },
-  // stamped onto the page from oversized
-  (since, dir) => { const p = seg(since, 0, 0.22), e = E.outBack(p, 2.2); return { scale: lerp(2.6, 1, e), alpha: clamp(p * 4), rot: lerp(-dir * 0.22, rest(dir), e) }; },
-  // flip open around the horizontal axis
-  (since, dir) => { const e = E.outBack(seg(since, 0, 0.3), 2.4); return { sy: Math.max(0.001, e), rot: rest(dir) }; },
-];
-
-// ---------- heading glyphs: raw∈(0,1] per glyph over `dur` seconds → pose (dy in glyph sizes)
-export const GLYPH_IN = [
-  { dur: 0.14, pose: (raw) => ({ scale: E.outBack(raw, 3) }) },                                             // pop
-  { dur: 0.24, pose: (raw) => ({ dy: (E.outBounce(raw) - 1) * 1.2, alpha: clamp(raw * 4) }) },              // drop
-  { dur: 0.2, pose: (raw) => ({ scale: E.outBack(raw, 2), rot: (E.outCubic(raw) - 1) * 1.4 }) },            // spin
-];
 
 // ---------- stickers: (seconds since the cue, side = ±1 for the screen edge it sits on) → pose
 export const STICKER_IN = [

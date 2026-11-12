@@ -7,8 +7,8 @@
 Supabase Functions / Postgres は移行後の監視とロールバックに備えて当面残すが、新しい本番処理からは参照しない。Supabase Storage だけは既存音声リンクの読み取り先として維持する。旧Supabaseの音声生成と新規 Storage アップロードは廃止済み。
 
 日本語の60秒まとめ動画を追加する実装・設定手順は [日次まとめ動画](docs/summary-video.md) を参照。
-PlaceReel の描画・音楽エンジンと Gemini の台本・音声を使い、翌朝07:00 JSTに前日分を処理する。
-動画の自動実行は `SUMMARY_VIDEO_ENABLED=true` の設定後に有効になる。
+PlaceReel の描画・音楽エンジンと Gemini の台本・音声を使い、翌朝07:00 JSTに起動する文章・画像まとめの投稿完了後、前日分の動画を処理する。
+Cloudflare Workflow が GitHub Actions の動画レンダラーを起動する。自動実行には Worker secret `GITHUB_VIDEO_DISPATCH_TOKEN` とリポジトリ変数 `SUMMARY_VIDEO_ENABLED=true` が必要。
 
 移行時の検証値と切替手順は [Cloudflare Workers + Turso migration runbook](docs/2026-08-30-cloudflare-turso-migration.md) に記録している。
 
@@ -23,7 +23,7 @@ PlaceReel の描画・音楽エンジンと Gemini の台本・音声を使い�
 | Mattermost API | 投稿、スレッド・reaction・User Group・チャンネルの取得、画像アップロード |
 | OpenAI API | `gpt-5.6-luna` のテキスト要約と `gpt-image-2` の画像生成 |
 | Gemini API | 追加の動画用日本語台本・ナレーション |
-| GitHub Actions + Chromium / FFmpeg | 有効化後、07:00 JSTに前日分の動画をレンダリングしてWorker経由で投稿 |
+| GitHub Actions + Chromium / FFmpeg | Cloudflare Workflow から投稿完了後に起動し、前日分の動画をレンダリングしてWorker経由で投稿 |
 | Supabase Storage | 移行前に生成された既存音声オブジェクトの読み取り専用保管先 |
 
 処理経路は次のとおり。
@@ -37,7 +37,8 @@ Cloudflare Cron 07:00 JST ──> Workflow
   ├─ Mattermost の前日投稿を収集
   ├─ OpenAI でテキスト要約
   ├─ OpenAI で画像生成し Mattermost へアップロード
-  └─ Mattermost のサマリーチャンネルへ投稿
+  ├─ Mattermost のサマリーチャンネルへ投稿
+  └─ 投稿成功後に GitHub Actions の動画ジョブを起動
 ```
 
 ## Production routes

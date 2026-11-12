@@ -7,7 +7,7 @@ import { addCalendarDays, jstDate } from "../src/domain/date";
 import { registerVideoRoutes, ensureVideoTable } from "../src/routes/video";
 import { demoPlan } from "../video/sample";
 import { collectVideoSource } from "../video/source";
-import { directSummary, synthesize } from "../video/gemini";
+import { directSummary, shortenNarration, synthesize } from "../video/gemini";
 
 const state = vi.hoisted(() => ({ client: null as unknown as Client }));
 vi.mock("@libsql/client/web", () => ({ createClient: () => state.client }));
@@ -95,6 +95,30 @@ describe("video admin API", () => {
     expect(await (await request("audio/hook", { method: "POST" })).json()).toEqual({ audio: "hook-wav", narration: "動いた！直った！盛り上がった！" });
     expect(vi.mocked(synthesize).mock.calls[0].slice(1)).toEqual(["動いた！直った！盛り上がった！", demoPlan(date).hook]);
     expect((await request("audio/nope", { method: "POST" })).status).toBe(404);
+  });
+  it("reuses shortened narration after synthesis fails or its response is lost", async () => {
+    await seed();
+    const shorter = "短くした読み上げです。";
+    vi.mocked(shortenNarration).mockResolvedValueOnce(shorter);
+    vi.mocked(synthesize).mockRejectedValueOnce(new Error("Temporary TTS failure"))
+      .mockResolvedValue("wav");
+    app.onError((_error, c) => c.json({ error: "Temporary TTS failure" }, 500));
+    const init = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ maxChars: [...shorter].length }) };
+    expect((await request("audio/0", init)).status).toBe(500);
+    // The first request saved its edit before TTS failed; the replay must not be a 400.
+    expect(await (await request("audio/0", init)).json()).toEqual({ audio: "wav", narration: shorter });
+    expect(await (await request("audio/0", { ...init, body: JSON.stringify({ maxChars: [...shorter].length + 1 }) })).json())
+      .toEqual({ audio: "wav", narration: shorter });
+    expect(shortenNarration).toHaveBeenCalledOnce();
+    expect(vi.mocked(synthesize).mock.calls.slice(-3).every(([, text]) => text === shorter)).toBe(true);
+  });
+  it("rejects invalid shorter narration budgets without generating audio", async () => {
+    await seed();
+    vi.mocked(synthesize).mockClear();
+    for (const maxChars of [7, 8.5, "10"]) {
+      expect((await request("audio/0", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ maxChars }) })).status).toBe(400);
+    }
+    expect(synthesize).not.toHaveBeenCalled();
   });
   it("serves avatars only for people in the storyboard", async () => {
     await seed();

@@ -6,7 +6,9 @@ import { overdrive, overdriveTilt } from './vendor/placereel/fx/overdrive.js';
 import { TRANSITION } from './vendor/placereel/fx/transition.js';
 import { renderSoundtrack } from './vendor/placereel/audio.js';
 import { timeStretch } from './vendor/placereel/voice.js';
-import { CUT, CUTS, CARD_IN, GLYPH_IN, STICKER_IN, HERO_IN } from './motions.js';
+import { CUT, CUTS, STICKER_IN, HERO_IN } from './motions.js';
+import { createPostStyles } from './post-styles.js';
+import { createHeadingStyles } from './heading-styles.js';
 
 const canvas = document.querySelector('canvas');
 const font = '"Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
@@ -128,7 +130,7 @@ function cueSheet(plan) {
 
 const hashStr = (s) => [...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
 
-function makeRenderer(plan, speech, faces, cues, duration, roll) {
+function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
   const seed = Number(plan.date.replaceAll('-', ''));
   const model = { seed, place: { title: '未踏ジュニア', score: 0 }, keywords: plan.scenes.map(s => ({ word: s.keyword })) };
   const K = createKit(canvas, model, { photos: [], palette: pickPalette([], '', plan.accent) }, { type: 'modern' });
@@ -240,20 +242,19 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
   }
 
   // Meme-style type: thick black outline, per-glyph pop, keyword marker.
-  function popText(lay, x, y, tau, { start = 0, step = 0.045, color = '#fff', hl = null, align = 'left', maxW = W - 2 * M, motion = GLYPH_IN[0] } = {}) {
+  function popText(lay, x, y, tau, { start = 0, step = 0.045, color = '#fff', hl = null, align = 'left', maxW = W - 2 * M } = {}) {
     const c = K.ctx, units = new Map();
     lay.glyphs.forEach((g) => { if (!units.has(g.i0)) units.set(g.i0, units.size); });
     K.font('display', lay.size, lay.opts);
     c.textBaseline = 'top'; c.lineJoin = 'round';
     for (const pass of ['stroke', 'fill']) {
       lay.glyphs.forEach((g) => {
-        const a = start + units.get(g.i0) * step, raw = seg(tau, a, a + motion.dur);
+        const a = start + units.get(g.i0) * step, raw = seg(tau, a, a + 0.14);
         if (raw <= 0) return;
-        const { scale = 1, dy = 0, rot = 0, alpha = 1 } = motion.pose(raw);
+        const s = E.outBack(raw, 3);
         const gx = K.lineX(lay, g.li, x, maxW, align) + g.x, gy = y + g.li * lay.lineH;
         c.save();
-        c.globalAlpha *= alpha;
-        c.translate(gx + g.w / 2, gy + lay.size / 2 + dy * lay.size); c.rotate(rot); c.scale(scale, scale); c.translate(-(gx + g.w / 2), -(gy + lay.size / 2));
+        c.translate(gx + g.w / 2, gy + lay.size / 2); c.scale(s, s); c.translate(-(gx + g.w / 2), -(gy + lay.size / 2));
         if (pass === 'stroke') { c.strokeStyle = '#000'; c.lineWidth = lay.size * 0.2; c.strokeText(g.s, gx, gy); }
         else { c.fillStyle = hl && g.i0 >= hl[0] && g.i0 < hl[1] ? '#ffe100' : color; c.fillText(g.s, gx, gy); }
         c.restore();
@@ -277,6 +278,14 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     c.strokeStyle = ring; c.lineWidth = X(6); c.stroke();
   }
 
+  const postStyles = createPostStyles({ K, X, W, H, plan, posts, seed, col, rr, face, emo });
+  const styleOrder = options.styles?.length ? options.styles : postStyles.order();
+  const styleOf = (i) => styleOrder[i % styleOrder.length];
+  // Headings get their own entrance/effect per scene (-1 is the hook headline), also shuffled per day.
+  const headingStyles = createHeadingStyles({ K, X, W, col, seed });
+  const headingOrder = options.headings?.length ? options.headings : headingStyles.order();
+  const headingOf = (i) => headingOrder[(i + 1) % headingOrder.length];
+
   function background(t, i, list) {
     const c = K.ctx, k = kickEnv(t);
     K.fill(K.gradient([[0, pal.hsl(hue(i), 60, 9)], [1, pal.hsl(hue(i) + 40, 70, 17)]], 0, 0, W, H));
@@ -289,6 +298,7 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     });
     c.restore();
     wallpaper(t, i, list);
+    if (i >= 0 && i < N) postStyles.wall(t, i);
   }
 
   function confetti(t, t0, n, s) {
@@ -362,7 +372,8 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     const lay = hookLay(), top = X(320), cy = top + lay.lines.length * lay.lineH / 2, s = 1 + 0.03 * kickEnv(t);
     c.save();
     c.translate(W / 2, cy); c.rotate(-0.035); c.scale(s, s); c.translate(-W / 2, -cy);
-    popText(lay, M, top, 1);
+    // The day's heading style, with its entrance already over: only its lasting effect plays.
+    headingStyles.draw(headingOf(-1), lay, M, top, t + 3, t, -1);
     c.restore();
     if (cues.freeze) teaser(t); else statTiles(t);
     stars.slice(0, 7).forEach((s, k, arr) => {
@@ -411,24 +422,17 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     const r = X(42);
     face(p.userId, p.user, x + X(40) + r, y + X(30) + r, r, col(i));
     const nx = x + X(150);
-    const nw = K.text('body', X(36), `@${p.user}`, nx, y + X(66), { color: '#111', w: 900, maxW: w * 0.42 });
+    const nw = K.text('body', X(32), `@${p.user}`, nx, y + X(64), { color: '#111', w: 900, maxW: w * 0.42 });
     const where = p.channel !== plan.scenes[i].source && plan.sources[p.channel] ? ` · #${plan.sources[p.channel].name}` : '';
-    K.text('body', X(28), `${p.time}${where}`, nx + nw + X(14), y + X(66), { color: '#888', w: 600, maxW: w - (nx - x) - nw - X(30) });
-    // Quote types itself out right after the slam, large enough to read at a glance.
-    const area = h - X(100), fs = Math.min(X(72), area / 2 / 1.28);
+    K.text('body', X(26), `${p.time}${where}`, nx + nw + X(14), y + X(64), { color: '#888', w: 600, maxW: w - (nx - x) - nw - X(30) });
+    // Quote types itself out right after the slam.
+    const area = h - X(92), fs = Math.min(X(42), area / 2 / 1.28);
     const lines = Math.max(1, Math.floor(area / (fs * 1.28)));
     const lay = K.fit(`c${card.id}-${Math.round(h)}`, p.text, 'body', w - (nx - x) - X(28), lines, fs, X(24), { w: 700, lh: 1.28 });
     const upto = Math.ceil(lay.glyphs.length * seg(since, 0.05, 0.05 + Math.min(0.35, lay.glyphs.length * 0.012)));
-    const typed = lay.glyphs.slice(0, upto), ty = y + X(92);
-    // Highlighter-pen marker under the scene keyword.
-    const word = plan.scenes[i].keyword, k0 = word ? p.text.indexOf(word) : -1;
-    if (k0 >= 0) {
-      c.fillStyle = '#ffe100';
-      typed.forEach((g) => { if (g.i0 >= k0 && g.i0 < k0 + word.length) c.fillRect(nx + g.x - 1, ty + g.li * lay.lineH + lay.size * 0.1, g.w + 2, lay.size); });
-    }
     K.font('body', lay.size, lay.opts);
     c.textBaseline = 'top'; c.fillStyle = '#111';
-    typed.forEach((g) => c.fillText(g.s, nx + g.x, ty + g.li * lay.lineH));
+    lay.glyphs.slice(0, upto).forEach((g) => c.fillText(g.s, nx + g.x, y + X(84) + g.li * lay.lineH));
     // Reaction / reply badges pop onto the card's top-right edge.
     const chips = [...p.reactions.map(r => [r.emoji, r.count]), ...(p.replies ? [['💬', p.replies]] : [])];
     let cx = x + w - X(18);
@@ -450,16 +454,34 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
     });
   }
 
+  // Replies of the threads shown in scene i, queued through one lane so they never overlap each other;
+  // one that could not get on screen before the scene ends is dropped.
+  const LANE = X(96), FLY = X(640), lanes = new Map();
+  function chatter(i) {
+    if (lanes.has(i)) return lanes.get(i);
+    const said = [], end = plan.scenes[i].end;
+    let free = 0;
+    K.font('body', X(44), { w: 900 });
+    cues.scenes[i].cards.forEach((card) => (posts[card.id].chatter ?? []).forEach((text) => {
+      const at = Math.max(card.at + 0.4, free), w = K.ctx.measureText(text).width;
+      if (at > end - 1 || said.some((x) => x.text === text)) return;
+      said.push({ text, at, w });
+      free = at + (w + X(70)) / FLY;
+    }));
+    lanes.set(i, said);
+    return said;
+  }
+
   function scene(i, t) {
     const c = K.ctx, s = plan.scenes[i], cue = cues.scenes[i], tau = t - s.start, list = emojiOf(plan, i);
     background(t, i, list);
-    // Card layout comes first: the camera punches in on whichever card just landed, and drifts closer meanwhile.
-    const n = cue.cards.length, spots = [], area = [X(670), X(1800)], gap = X(96), w = W - 2 * M;
-    const h = n ? Math.min(X(420), (area[1] - area[0] - gap * (n - 1)) / n) : 0;
-    const y0 = area[0] + (area[1] - area[0] - (n * h + (n - 1) * gap)) / 2;
-    const latest = cue.cards.reduce((mx, card, j) => (t >= card.at ? j : mx), -1);
-    const cam = 1 + 0.02 * seg(tau, 0, s.end - s.start) + (latest < 0 ? 0 : 0.05 * Math.exp(-(t - cue.cards[latest].at) * 5));
-    const camY = latest < 0 ? H / 2 : lerp(H / 2, y0 + latest * (h + gap) + h / 2, 0.6);
+    const lay = headLay(i), k0 = s.heading.indexOf(s.keyword);
+    const top = X(385), areaTop = top + lay.lines.length * lay.lineH + X(44);
+    const n = cue.cards.length, latest = cue.cards.reduce((mx, card, j) => (t >= card.at ? j : mx), -1);
+    const said = chatter(i);
+    // The camera drifts closer through the scene and punches in when a post lands (gently when many do).
+    const cam = 1 + 0.02 * seg(tau, 0, s.end - s.start) + (latest < 0 ? 0 : 0.1 / (1 + n) * Math.exp(-(t - cue.cards[latest].at) * 5));
+    const camY = (areaTop + X(1820)) / 2;
     c.save();
     c.translate(W / 2, camY); c.scale(cam, cam); c.translate(-W / 2, -camY);
     const kind = KIND[s.kind] ?? KIND.progress;
@@ -484,34 +506,21 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
       c.restore();
     }
     // Heading: word pops with the keyword highlighted, pulsing on the kick.
-    const lay = headLay(i), k0 = s.heading.indexOf(s.keyword);
-    const top = X(385), cy = top + lay.lines.length * lay.lineH / 2, pulse = 1 + 0.03 * kickEnv(t);
+    const cy = top + lay.lines.length * lay.lineH / 2, pulse = 1 + 0.03 * kickEnv(t);
     c.save();
     c.translate(W / 2, cy); c.scale(pulse, pulse); c.translate(-W / 2, -cy);
-    popText(lay, M, top, tau, { start: 0.08, hl: k0 >= 0 ? [k0, k0 + s.keyword.length] : null, motion: pick(GLYPH_IN, i) });
+    headingStyles.draw(headingOf(i), lay, M, top, tau, t, i, { hl: k0 >= 0 ? [k0, k0 + s.keyword.length] : null });
     c.restore();
     // Giant topic emoji smashes, spins or drops in, then parks top-right and bounces on the beat.
     const hero = pick(HERO_IN, i)(tau), m = E.inOutCubic(seg(tau, 0.3, 0.5));
     emo(list[0], lerp(W / 2, W - X(118), m), lerp(H * (0.48 + (hero.dy ?? 0)), X(210), m) - kickEnv(t, 10) * X(18) * m,
       lerp(X(620), X(150), m) * (hero.scale ?? 1) * (1 + 0.12 * kickEnv(t) * m), lerp(hero.rot ?? 0, 0.14 * Math.sin(t * 5), m));
-    // Original post cards, stacked; the scene's entrance (slam, drop, stamp or flip) alternates sides per card.
-    {
-      cue.cards.forEach((card, j) => {
-        const since = t - card.at, y = y0 + j * (h + gap);
-        spots.push({ card, x: M, y, w, h });
-        if (since < 0) return;
-        const pose = pick(CARD_IN, i)(since, j % 2 ? 1 : -1);
-        c.save();
-        c.globalAlpha *= pose.alpha ?? 1;
-        c.translate(M + w / 2 + (pose.dx ?? 0) * W, y + h / 2 + (pose.dy ?? 0) * H);
-        c.rotate(pose.rot);
-        const s2 = (j === latest ? 1 + 0.025 * kickEnv(t, 12) : 1) * (pose.scale ?? 1);
-        c.scale(s2, s2 * (pose.sy ?? 1));
-        c.translate(-(M + w / 2), -(y + h / 2));
-        postCard(posts[card.id], card, M, y, w, h, t, i, j === latest);
-        c.restore();
-      });
-    }
+    // Original posts, in this scene's presentation style, filling the space under the heading
+    // (minus one lane at the bottom when the scene has replies to fly past).
+    const spots = postStyles.STYLES[styleOf(i)]({
+      t, i, list, latest, start: s.start, end: s.end, A: { x: M, y: areaTop, w: W - 2 * M, h: X(1820) - areaTop - (said.length ? LANE : 0) },
+      items: cue.cards.map((card, j) => ({ card, p: posts[card.id], j })),
+    });
     // Emoji on every slam, and reactions streaming up like a live stream.
     spots.forEach(({ card, x, y, w, h }, j) => {
       const p = posts[card.id], own = p.reactions.map(r => r.emoji);
@@ -529,25 +538,15 @@ function makeRenderer(plan, speech, faces, cues, duration, roll) {
       emo(list[(st.k + 1) % list.length], x + (pose.dx ?? 0) * W, X(740) + r(3) * X(1000) + (pose.dy ?? 0) * H,
         X(150) * (pose.scale ?? 1) * (1 + 0.14 * kickEnv(t)), (r(5) - 0.5) * 0.7 + Math.sin(t * 6 + st.k) * 0.14 + (pose.rot ?? 0));
     });
-    // Real replies from the thread fly past like live comments, in the lanes around the cards (never over them).
-    if (n) {
-      const above = [], below = [], lanes = [], said = [];
-      for (let y = y0 - X(62); y > X(660); y -= X(86)) above.push(y);
-      for (let y = y0 + n * h + (n - 1) * gap + X(62); y < X(1810); y += X(86)) below.push(y);
-      for (let j = 0; j < n - 1; j++) lanes.push(y0 + j * (h + gap) + h + gap / 2);
-      for (let k = 0; k < Math.max(above.length, below.length); k++) lanes.push(...[above[k], below[k]].filter(Boolean));
-      cue.cards.forEach((card) => (posts[card.id].chatter ?? []).forEach((text) => {
-        if (said.length < 5 && !said.some((x) => x.text === text)) said.push({ text, at: card.at });
-      }));
+    // Real replies from the thread fly past like live comments, in their own lane under the posts.
+    if (said.length) {
       K.font('body', X(44), { w: 900 });
       c.textAlign = 'left'; c.textBaseline = 'middle'; c.lineJoin = 'round';
-      said.forEach(({ text, at }, k) => {
-        const q = t - (at + 0.4 + k * 0.3);
-        if (q < 0 || !lanes.length) return;
-        const tw = c.measureText(text).width, x = W + X(20) - q * (W + tw + X(40)) / 1.7;
-        if (x < -tw) return;
-        c.strokeStyle = '#000'; c.lineWidth = X(10); c.strokeText(text, x, lanes[k % lanes.length]);
-        c.fillStyle = '#fff'; c.fillText(text, x, lanes[k % lanes.length]);
+      said.forEach(({ text, at, w }) => {
+        const x = W + X(20) - (t - at) * FLY;
+        if (t < at || x < -w) return;
+        c.strokeStyle = '#000'; c.lineWidth = X(10); c.strokeText(text, x, X(1820) - LANE / 2 + X(8));
+        c.fillStyle = '#fff'; c.fillText(text, x, X(1820) - LANE / 2 + X(8));
       });
     }
     c.restore();
@@ -695,10 +694,12 @@ function wav(buffer) {
   return out;
 }
 
-window.prepareVideo = async (plan, audio, avatars = {}, hookAudio = null) => {
+// `options.styles` / `options.headings` pin the post / heading style of each scene (for previews); normally they are
+// shuffled per day. `options.hook` is the audio of the headline read over the opening.
+window.prepareVideo = async (plan, audio, avatars = {}, options = {}) => {
   await document.fonts.ready;
   const roll = rollCall(plan);
-  const { speech, tooLong, duration } = await prepareAudio(plan, audio, roll.length ? ROLL_LEN : 0, hookAudio);
+  const { speech, tooLong, duration } = await prepareAudio(plan, audio, roll.length ? ROLL_LEN : 0, options.hook);
   if (tooLong.length) return { tooLong };
   // PlaceReel's clock accepts listed lengths only; any even length up to 60 s works with its grid.
   if (!LENGTHS.includes(duration)) LENGTHS.push(duration);
@@ -708,12 +709,14 @@ window.prepareVideo = async (plan, audio, avatars = {}, hookAudio = null) => {
     try { faces[id] = await createImageBitmap(await (await fetch(url)).blob()); } catch { /* initials */ }
   }
   const cues = cueSheet(plan);
-  const renderer = makeRenderer(plan, speech, faces, cues, duration, roll);
+  const renderer = makeRenderer(plan, speech, faces, cues, duration, roll, options);
   render = renderer.draw;
   const soundtrack = await renderSoundtrack({ seed: Number(plan.date.replaceAll('-', '')) }, plan.music,
     { energy: ENERGY.dopamine, events: soundEvents(plan, speech, cues, renderer.pops, duration, roll), speech });
   const response = await fetch('/soundtrack', { method: 'POST', body: wav(soundtrack) });
   if (!response.ok) throw new Error('Could not save soundtrack');
-  return { tooLong: [], duration };
+  return { tooLong: [], duration, scenes: plan.scenes.map((s) => [s.start, s.end]) };
 };
 window.renderFrame = t => { render(t); return canvas.toDataURL('image/jpeg', .9).split(',')[1]; };
+window.postStyleIds = () => Object.keys(createPostStyles({ K: {}, X: (v) => v, plan: {}, posts: [], seed: 0 }).STYLES);
+window.headingStyleIds = () => Object.keys(createHeadingStyles({ K: {}, X: (v) => v, seed: 0 }).STYLES);

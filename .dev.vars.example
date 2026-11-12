@@ -16,3 +16,5 @@ GEMINI_VOICE=Kore
 # Used by the local renderer, not by the Worker itself.
 VIDEO_API_URL=http://127.0.0.1:8787
 VIDEO_RUNNER_SECRET=
+# Fine-grained GitHub token: this repository only, Actions permission write.
+GITHUB_VIDEO_DISPATCH_TOKEN=

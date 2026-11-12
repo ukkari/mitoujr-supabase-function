@@ -6,6 +6,7 @@ import { addCalendarDays, jstDate } from "../src/domain/date";
 import { createVideoRenderer, snapshotTimes } from "./export";
 import { demoPlan, demoAudio } from "./sample";
 import { customEmojiName } from "./emoji";
+import { createVideoApi } from "./api";
 import type { VideoPlan } from "./types";
 
 const { values } = parseArgs({ options: {
@@ -22,16 +23,7 @@ if (!values.demo && new URL(base!).protocol !== "https:" && !["127.0.0.1", "loca
   throw new Error("Video API must use HTTPS");
 }
 const endpoint = `${base?.replace(/\/$/, "")}/admin/summary-video/${date}`;
-async function api(path: string, init: RequestInit = {}) {
-  const response = await fetch(endpoint + path, { ...init,
-    headers: { Authorization: `Bearer ${secret}`, ...init.headers }, redirect: "error",
-    signal: AbortSignal.timeout(240_000) });
-  if (!response.ok) {
-    const detail = await response.json().then((body: any) => String(body?.error ?? "")).catch(() => "");
-    throw new Error(`Video API ${path} failed (${response.status})${detail ? `: ${detail}` : ""}`);
-  }
-  return await response.json() as any;
-}
+const api = createVideoApi(endpoint, secret ?? "");
 
 async function image(path: string) {
   try {

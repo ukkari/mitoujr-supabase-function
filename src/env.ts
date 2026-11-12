@@ -1,10 +1,17 @@
 export type SummaryTarget = "yesterday" | "today";
 
-export type SummaryWorkflowParams = {
-  target: SummaryTarget;
-  targetDateJst: string;
-  requestedBy: "cron" | "admin";
-};
+export type SummaryWorkflowParams =
+  | {
+    target: SummaryTarget;
+    targetDateJst: string;
+    requestedBy: "cron" | "admin";
+    mode?: undefined;
+  }
+  | {
+    mode: "video-dispatch";
+    targetDateJst: string;
+    requestedBy: "admin";
+  };
 
 export type WorkflowStatus = {
   status:
@@ -54,6 +61,7 @@ export interface Env {
   GEMINI_VOICE?: string;
   VIDEO_RUNNER_SECRET?: string;
   VIDEO_TEST_CHANNEL?: string;
+  GITHUB_VIDEO_DISPATCH_TOKEN?: string;
   ADMIN_TRIGGER_SECRET: string;
   DRY_RUN?: string;
   DAILY_SUMMARY_WORKFLOW: WorkflowBinding;

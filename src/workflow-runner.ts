@@ -1,5 +1,6 @@
 import { SummaryRunRepository } from "./db";
 import { stablePendingPostId } from "./domain/idempotency";
+import { addCalendarDays, jstDate } from "./domain/date";
 import type { Env, SummaryWorkflowParams } from "./env";
 import { isDryRun } from "./env";
 import { MattermostClient } from "./mattermost";
@@ -9,6 +10,7 @@ import {
   generateTextSummary,
   prepareSummaryCollection,
 } from "./summary";
+import { dispatchSummaryVideo } from "./video-dispatch";
 
 type StepOptions = {
   retries: {
@@ -46,6 +48,7 @@ export type WorkflowRunnerDependencies = {
   generateText: typeof generateTextSummary;
   generateImage: typeof generateSummaryImage;
   pendingPostId: typeof stablePendingPostId;
+  dispatchVideo: typeof dispatchSummaryVideo;
 };
 
 function defaultDependencies(env: Env): WorkflowRunnerDependencies {
@@ -57,6 +60,7 @@ function defaultDependencies(env: Env): WorkflowRunnerDependencies {
     generateText: generateTextSummary,
     generateImage: generateSummaryImage,
     pendingPostId: stablePendingPostId,
+    dispatchVideo: dispatchSummaryVideo,
   };
 }
 
@@ -68,6 +72,9 @@ export async function runDailySummaryWorkflow(
   suppliedDependencies?: WorkflowRunnerDependencies,
 ) {
   const dependencies = suppliedDependencies ?? defaultDependencies(env);
+  if (params.mode === "video-dispatch") {
+    return await runPostedSummaryVideoDispatch(env, params.targetDateJst, step, dependencies);
+  }
   const repository = dependencies.repository;
   const collectionPlan = await step.do(
     "list-mattermost-channels",
@@ -196,7 +203,58 @@ export async function runDailySummaryWorkflow(
     },
   );
   await clearTemporaryContent(step, repository, instanceId);
+  if (params.requestedBy === "cron") {
+    try {
+      await step.do(
+        "dispatch-summary-video",
+        { retries: { limit: 3, delay: "15 seconds", backoff: "exponential" } },
+        async () => {
+          const result = await dependencies.dispatchVideo(env, inputMetadata.targetDateJst);
+          return { targetDateJst: inputMetadata.targetDateJst, ...result };
+        },
+      );
+    } catch (error) {
+      // The text/image summary must remain complete so the video can attach to its thread.
+      console.error("Summary video dispatch failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   return published;
+}
+
+async function runPostedSummaryVideoDispatch(
+  env: Env,
+  targetDateJst: string,
+  step: WorkflowStepLike,
+  dependencies: WorkflowRunnerDependencies,
+) {
+  const today = jstDate();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDateJst) ||
+    addCalendarDays(targetDateJst, 0) !== targetDateJst ||
+    targetDateJst < addCalendarDays(today, -7) || targetDateJst > today) {
+    throw new Error("Video dispatch date must be within the last seven JST days");
+  }
+  if (isDryRun(env)) throw new Error("Video dispatch is disabled in DRY_RUN");
+
+  const summary = await step.do("verify-posted-summary", async () => {
+    const instance = await env.DAILY_SUMMARY_WORKFLOW.get(`summary-${targetDateJst}`);
+    const status = await instance.status();
+    const output = typeof status.output === "string" ? JSON.parse(status.output) : status.output;
+    const result = output as { outcome?: unknown; postId?: unknown } | undefined;
+    if (status.status !== "complete" ||
+      (result?.outcome !== "posted-with-image" && result?.outcome !== "posted-text-fallback") ||
+      typeof result.postId !== "string") {
+      throw new Error("The daily summary has not posted an update for this date");
+    }
+    return { postId: result.postId };
+  });
+  const dispatched = await step.do(
+    "dispatch-summary-video",
+    { retries: { limit: 3, delay: "15 seconds", backoff: "exponential" } },
+    async () => await dependencies.dispatchVideo(env, targetDateJst),
+  );
+  return { outcome: "video-dispatched", targetDateJst, summaryPostId: summary.postId, ...dispatched };
 }
 
 async function clearTemporaryContent(

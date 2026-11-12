@@ -15,14 +15,18 @@ describe("Japanese video direction", () => {
     expect(plan.scenes.every((scene, i) => scene.end - scene.start === 4 && (i === 0 || scene.start === plan.scenes[i - 1].end))).toBe(true);
     expect(plan.emoji).toEqual(["🚀", "🔥", "🎉"]);
     expect(plan.scenes[0].emoji).toEqual(["🚀", "⚙️", "🎉", "🔋"]);
-    expect(plan.scenes[0].posts).toEqual([0, 1]);
-    expect(plan.scenes.every((scene) => scene.posts.length <= 2)).toBe(true);
+    expect(plan.scenes[0].posts).toEqual([0, 1, 2]);
     expect(plan.posts[0]).toMatchObject({ user: "hana", time: "09:12", text: "試作品のモーター、ついに動きました！！", replies: 5 });
     expect(plan.posts[0].reactions[0]).toEqual({ emoji: "🎉", count: 9 });
     expect(plan.stats).toEqual({ posts: 14, channels: 3, people: 7, reactions: 105 });
     expect(plan.stars[0]).toMatchObject({ user: "hana", posts: 2 });
     expect(plan.sources[1]).toMatchObject({ name: "デモ・開発相談", posts: 5, people: 4, top: "sora".padEnd(26, "0") });
     expect(JSON.stringify(plan)).not.toContain("後で貼ります");
+  });
+  it("keeps up to six posts per scene so the screen can be filled", () => {
+    const raw = demoDirection();
+    raw.scenes[0].posts = Array.from({ length: 8 }, (_, id) => ({ id, quote: "" }));
+    expect(validatePlan(raw, source).scenes[0].posts).toHaveLength(6);
   });
   it("rejects invented source indices and overlong narration", () => {
     const raw = demoDirection();
@@ -80,8 +84,8 @@ describe("Japanese video direction", () => {
     raw.scenes[0].posts = [{ id: 0, quote: "世界初の快挙を達成" }, { id: 999, quote: "x" }];
     raw.scenes[1].posts = [];
     const plan = validatePlan(raw, source);
-    expect(plan.posts[plan.scenes[0].posts[0]].text).toBe("試作品のモーター、ついに動きました！！動画も撮ったので後で…");
-    expect(pickQuote("あ".repeat(50), "い")).toBe("あ".repeat(29) + "…");
+    expect(plan.posts[plan.scenes[0].posts[0]].text).toBe("試作品のモーター、ついに動きました！！動画も撮ったので後で貼ります");
+    expect(pickQuote("あ".repeat(50), "い")).toBe("あ".repeat(41) + "…");
     expect(plan.scenes[0].posts).toHaveLength(1);
     expect(plan.posts[plan.scenes[1].posts[0]].user).toBe("sora");
   });
@@ -104,6 +108,7 @@ describe("Japanese video direction", () => {
   it("reads the headline as the opening line and scrolls real thread replies past a card", () => {
     const raw = demoDirection();
     raw.headline = "🚀 動いた！直った！";
+    raw.scenes[0].posts = [{ id: 0, quote: "" }, { id: 1, quote: "" }];
     const plan = validatePlan(raw, source);
     expect(plan.hook).toEqual({ narration: "動いた！直った！", voice: "Puck", tone: "タイトルコールを叫ぶように勢いよく" });
     // hana's post is the thread root; riku's reply is its second card, so only the third post scrolls by.
