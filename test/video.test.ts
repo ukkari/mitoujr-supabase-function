@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanText, directSummary, emojiOf, pickQuote, synthesize, validatePlan } from "../video/gemini";
+import { MAX_SCENES, cleanText, directSummary, emojiOf, pickQuote, shuffled, synthesize, validatePlan } from "../video/gemini";
 import { validVideoDate, videoMessage } from "../src/routes/video";
 import { demoDirection, demoSource } from "../video/sample";
 import { MattermostClient } from "../src/mattermost";
@@ -42,9 +42,9 @@ describe("Japanese video direction", () => {
     const raw: any = demoDirection();
     raw.headline = "あ".repeat(30); raw.title = "🎬" + "い".repeat(50); raw.accent = "red"; raw.music = "polka";
     raw.scenes[0].narration = "あ".repeat(40); raw.scenes[0].heading = "う".repeat(30); raw.scenes[0].kind = "rant";
-    raw.scenes = Array.from({ length: 14 }, (_, i) => raw.scenes[i % 7]);
+    raw.scenes = Array.from({ length: MAX_SCENES + 1 }, (_, i) => raw.scenes[i % 7]);
     const plan = validatePlan(raw, source);
-    expect(plan.scenes).toHaveLength(13);
+    expect(plan.scenes).toHaveLength(MAX_SCENES);
     expect([...plan.headline]).toHaveLength(24);
     expect([...plan.title]).toHaveLength(40);
     expect(plan).toMatchObject({ accent: "#93fa59", music: "futurebass" });
@@ -90,7 +90,56 @@ describe("Japanese video direction", () => {
     expect(plan.posts[plan.scenes[1].posts[0]].user).toBe("sora");
   });
   it("turns Markdown posts into one plain line", () => {
-    expect(cleanText("## 見出し\n**太字** [資料](https://x.example) :tada:\n```js\nsecret()\n``` https://a.example/b <b>")).toBe("見出し 太字 資料 🎉 ［コード］ 🔗 b");
+    expect(cleanText("## 見出し\n**太字** [資料](https://x.example) :tada:\n```js\nsecret()\n``` https://a.example/b <b>")).toBe("見出し 太字 資料 🎉 ［コード］ b");
+  });
+  it("never shows links, and skips posts that are only a link", () => {
+    expect(cleanText("これ見て https://a.example/b?c=1 すごい（https://b.example）")).toBe("これ見て すごい");
+    expect(cleanText("https://a.example/b")).toBe("");
+    const linked = structuredClone(source);
+    linked.channels[0].posts[0].message = "https://a.example/only-a-link";
+    linked.channels[2].posts.forEach((post) => { post.message = "[https://b.example](https://b.example)"; });
+    const raw = demoDirection();
+    raw.scenes[0].posts = [{ id: 0, quote: "" }];
+    const plan = validatePlan(raw, linked);
+    expect(plan.posts[plan.scenes[0].posts[0]]).toMatchObject({ user: "riku", text: "おめでとう！最初の一歩だね。電源まわりどうしたの？" });
+    expect(plan.scenes[3].posts).toEqual([]);
+    expect(JSON.stringify(plan.posts)).not.toMatch(/🔗|https?:/);
+  });
+  it("reads the headline as the opening line and scrolls real thread replies past a card", () => {
+    const raw = demoDirection();
+    raw.headline = "🚀 動いた！直った！";
+    raw.scenes[0].posts = [{ id: 0, quote: "" }, { id: 1, quote: "" }];
+    const plan = validatePlan(raw, source);
+    expect(plan.hook).toEqual({ narration: "動いた！直った！", voice: "Puck", tone: "タイトルコールを叫ぶように勢いよく" });
+    // hana's post is the thread root; riku's reply is its second card, so only the third post scrolls by.
+    expect(plan.posts[0].chatter).toEqual(["電池ボックスを2つに分けたら安…"]);
+    expect(plan.posts[plan.scenes[3].posts[0]].chatter).toEqual([]);
+  });
+  it("plays topics in a random order that is stable for the day", () => {
+    const items = Array.from({ length: 12 }, (_, i) => i);
+    expect(shuffled(items, "2026-09-25")).toEqual(shuffled(items, "2026-09-25"));
+    expect(shuffled(items, "2026-09-25")).not.toEqual(items);
+    expect(shuffled(items, "2026-09-25")).not.toEqual(shuffled(items, "2026-09-26"));
+    expect([...shuffled(items, "2026-09-25")].sort((a, b) => a - b)).toEqual(items);
+  });
+  it("gives channels the director skipped their own scene instead of the roll call", async () => {
+    const full = demoDirection(), partial = { ...full, scenes: full.scenes.filter((scene) => scene.source !== 2) };
+    const reply = (body: unknown) => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(body) }] } }] });
+    const mock = vi.fn()
+      .mockResolvedValueOnce(reply(partial))
+      .mockResolvedValueOnce(reply({ scenes: [full.scenes[3], full.scenes[5], { ...full.scenes[0], heading: "呼ばれていないチャンネル" }] }))
+      .mockResolvedValueOnce(reply(partial))
+      .mockResolvedValueOnce(new Response("quota", { status: 429 }));
+    vi.stubGlobal("fetch", mock);
+    const plan = await directSummary({ GEMINI_API_KEY: "k" }, source);
+    const asked = JSON.parse(JSON.parse(mock.mock.calls[1][1].body).contents[0].parts[0].text);
+    expect(asked.channels.map((channel: any) => channel.index)).toEqual([2]);
+    expect(asked.channels[0].posts[0].id).toBe(10);
+    expect(plan.scenes.filter((scene) => scene.source === 2).map((scene) => scene.heading)).toEqual(["論文まとめ置いといた"]);
+    expect(plan.scenes).toHaveLength(partial.scenes.length + 1);
+    // If the top-up fails, the video is still made; the roll call names the channel.
+    const fallback = await directSummary({ GEMINI_API_KEY: "k" }, source);
+    expect(fallback.scenes).toHaveLength(partial.scenes.length);
   });
   it("uses Gemini for directing and current TTS metadata without exposing errors", async () => {
     const mock = vi.fn()

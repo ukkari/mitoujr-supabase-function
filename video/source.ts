@@ -27,7 +27,7 @@ export async function collectVideoSource(env: Env, date: string, now = new Date(
     for (const post of posts) if (post.root_id) replies.set(post.root_id, (replies.get(post.root_id) ?? 0) + 1);
     const items = [];
     for (const post of posts) {
-      items.push({ id: post.id, userId: post.user_id, user: await client.fetchUsername(post.user_id),
+      items.push({ id: post.id, ...(post.root_id ? { rootId: post.root_id } : {}), userId: post.user_id, user: await client.fetchUsername(post.user_id),
         time: jstTime(post.create_at), message: post.message, reactions: countReactions(post.reactions ?? []),
         replies: post.root_id ? 0 : Math.max(post.reply_count ?? 0, replies.get(post.id) ?? 0) });
     }

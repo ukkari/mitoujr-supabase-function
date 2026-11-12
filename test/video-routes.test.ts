@@ -89,6 +89,13 @@ describe("video admin API", () => {
     await state.client.execute("UPDATE summary_videos SET status = 'publishing'");
     expect((await request("publish", { method: "PUT", headers: { "Content-Type": "video/mp4" }, body: mp4 })).status).toBe(409);
   });
+  it("reads the headline for the opening line", async () => {
+    await seed();
+    vi.mocked(synthesize).mockResolvedValue("hook-wav");
+    expect(await (await request("audio/hook", { method: "POST" })).json()).toEqual({ audio: "hook-wav", narration: "動いた！直った！盛り上がった！" });
+    expect(vi.mocked(synthesize).mock.calls[0].slice(1)).toEqual(["動いた！直った！盛り上がった！", demoPlan(date).hook]);
+    expect((await request("audio/nope", { method: "POST" })).status).toBe(404);
+  });
   it("reuses shortened narration after synthesis fails or its response is lost", async () => {
     await seed();
     const shorter = "短くした読み上げです。";

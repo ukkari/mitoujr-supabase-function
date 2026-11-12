@@ -2,6 +2,8 @@ export type Reaction = { emoji: string; count: number };
 
 export type SourcePost = {
   id: string;
+  // The thread root this post replies to, when it is a reply.
+  rootId?: string;
   userId: string;
   user: string;
   time: string;
@@ -46,9 +48,11 @@ export type VideoPost = {
   text: string;
   reactions: Reaction[];
   replies: number;
+  // Short excerpts of real replies in the same thread, scrolled past the card (never invented).
+  chatter: string[];
 };
 
-export const PLAN_VERSION = 4;
+export const PLAN_VERSION = 5;
 
 export type VideoPlan = {
   version: number;
@@ -57,6 +61,8 @@ export type VideoPlan = {
   date: string;
   label: string;
   headline: string;
+  // The headline read aloud over the opening two seconds, so the video talks from frame one.
+  hook: { narration: string; voice: string; tone: string };
   // The Mattermost message for the video: a clickable title with emoji, nothing else.
   title: string;
   emoji: string[];

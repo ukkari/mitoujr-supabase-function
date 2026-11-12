@@ -139,6 +139,10 @@ export function registerVideoRoutes(app: Hono<{ Bindings: Env }>) {
   app.post("/admin/summary-video/:date/audio/:index", async (c) => {
     const client = db(c.env), date = c.req.param("date"), key = runKey(c.env, date);
     const plan = await loadPlan(client, key);
+    // The opening line (the headline) is read once and never shortened.
+    if (plan?.hook && c.req.param("index") === "hook") {
+      return c.json({ audio: await synthesize(config(c.env), plan.hook.narration, plan.hook), narration: plan.hook.narration });
+    }
     const index = Number(c.req.param("index"));
     if (!plan || !Number.isInteger(index) || !plan.scenes[index]) return c.json({ error: "Scene not found" }, 404);
     const body = await c.req.json<{ maxChars?: number }>().catch(() => ({} as { maxChars?: number }));

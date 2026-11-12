@@ -5,8 +5,11 @@ import type { SourcePost, VideoPlan, VideoSource } from "./types";
 // not a Gemini voice, and exercises the full renderer/score/MP4 export offline.
 const people = ["hana", "sora", "riku", "mei", "kaito", "yui", "ren"];
 const userId = (name: string) => name.padEnd(26, "0");
+// Replies in the demo threads: reply id → root id.
+const roots: Record<number, number> = { 1: 0, 2: 0, 6: 5, 7: 5, 9: 8, 12: 11 };
 const post = (id: number, user: string, time: string, message: string, reactions: Array<[string, number]> = [], replies = 0): SourcePost =>
-  ({ id: `demo${id}`, userId: userId(user), user, time, message, replies, reactions: reactions.map(([emoji, count]) => ({ emoji, count })) });
+  ({ id: `demo${id}`, ...(id in roots ? { rootId: `demo${roots[id]}` } : {}), userId: userId(user), user, time, message, replies,
+    reactions: reactions.map(([emoji, count]) => ({ emoji, count })) });
 
 export function demoSource(date: string): VideoSource {
   return { date, label: "昨日", channels: [

@@ -6,6 +6,7 @@ import { overdrive, overdriveTilt } from './vendor/placereel/fx/overdrive.js';
 import { TRANSITION } from './vendor/placereel/fx/transition.js';
 import { renderSoundtrack } from './vendor/placereel/audio.js';
 import { timeStretch } from './vendor/placereel/voice.js';
+import { CUT, CUTS, STICKER_IN, HERO_IN } from './motions.js';
 import { createPostStyles } from './post-styles.js';
 import { createHeadingStyles } from './heading-styles.js';
 
@@ -20,14 +21,15 @@ const KIND = {
   fun: { label: '🎉 盛り上がり', emoji: ['😂', '🎉', '🤣', '✨', '🙌'] },
   news: { label: '📢 お知らせ', emoji: ['📢', '⚡', '👀', '✨', '🗓️'] },
 };
-// Every cut gets a different transition; the director's pick opens the first topic.
-const CUTS = ['band', 'zoom', 'pixel', 'whip', 'iris', 'flash', 'tiles', 'swipe', 'shutter'];
+const CUT_DRAW = { ...TRANSITION, ...CUT };
 const FREEZE_LEN = 0.5;
 const CUT_LEN = 0.24;
 // Narration is always sped up hard; scenes are 3–6 s (whole seconds = two beats). Each voice starts
 // PRE before its cut and may run POST past the next one, so consecutive voices overlap like a hand-off.
 const TEMPO = 1.7, MIN_SPEED = 1.45, MAX_SPEED = 2, PRE = 0.2, POST = 0.15, BODY_MAX = 56;
 const MIN_SCENE = 3, MAX_SCENE = 6;
+// The headline is read over the opening two seconds, squeezed into this window where possible.
+const HOOK_VOICE = 1.7, HOOK_MAX_SPEED = 2.2;
 
 function trimSilence(raw, sr) {
   let a = 0, b = raw.length;
@@ -37,17 +39,24 @@ function trimSilence(raw, sr) {
 }
 
 // Times every scene from its own sped-up voice, so the video is only as long as the day needs.
-async function prepareAudio(plan, audio, rollLen) {
+async function prepareAudio(plan, audio, rollLen, hookAudio) {
   const ctx = new OfflineAudioContext(1, 48000, 48000);
-  const clips = [];
-  for (let i = 0; i < plan.scenes.length; i++) {
-    const bytes = Uint8Array.from(atob(audio[i]), ch => ch.charCodeAt(0));
+  const decode = async (base64) => {
+    const bytes = Uint8Array.from(atob(base64), ch => ch.charCodeAt(0));
     const decoded = await ctx.decodeAudioData(bytes.buffer);
     const sr = decoded.sampleRate;
     const raw = trimSilence(decoded.getChannelData(0), sr);
     if (raw.length < sr * 0.1) throw new Error('Narration is empty or silent');
-    clips.push({ raw, sr, natural: raw.length / sr });
-  }
+    return { raw, sr, natural: raw.length / sr };
+  };
+  const stretch = (c, speed) => {
+    const samples = timeStretch(c.raw, speed, c.sr);
+    const buffer = ctx.createBuffer(1, samples.length, c.sr);
+    buffer.copyToChannel(samples, 0);
+    return { dur: samples.length / c.sr, buffer };
+  };
+  const clips = [];
+  for (let i = 0; i < plan.scenes.length; i++) clips.push(await decode(audio[i]));
   const fit = (speed) => clips.map(c => Math.max(MIN_SCENE, Math.ceil(c.natural / speed - PRE - POST)));
   const total = (lens) => lens.reduce((s, b) => s + b, 0);
   const body = BODY_MAX - rollLen;
@@ -76,12 +85,12 @@ async function prepareAudio(plan, audio, rollLen) {
   const speech = clips.map((c, i) => {
     // Fill the slot (never slower than MIN_SPEED) so the next voice cuts in over this one's tail.
     const s = plan.scenes[i], start = s.start - PRE;
-    const speed = clamp(c.natural / (s.end + POST - start), MIN_SPEED, MAX_SPEED);
-    const samples = timeStretch(c.raw, speed, c.sr);
-    const buffer = ctx.createBuffer(1, samples.length, c.sr);
-    buffer.copyToChannel(samples, 0);
-    return { start, dur: samples.length / c.sr, buffer };
+    return { start, ...stretch(c, clamp(c.natural / (s.end + POST - start), MIN_SPEED, MAX_SPEED)) };
   });
+  if (hookAudio) {
+    const c = await decode(hookAudio);
+    speech.unshift({ start: 0.05, ...stretch(c, clamp(c.natural / HOOK_VOICE, MIN_SPEED, HOOK_MAX_SPEED)) });
+  }
   return { speech, tooLong, duration: t + 2 };
 }
 
@@ -91,7 +100,7 @@ function rollCall(plan) {
   return plan.sources.map((src, index) => ({ ...src, index })).filter(src => !featured.has(src.index) && src.posts !== 0)
     .sort((a, b) => (b.posts ?? 0) - (a.posts ?? 0));
 }
-const ROLL_LEN = 4, ROLL_SHOWN = 12, rollAt = (k) => 0.25 + k * BEAT / 4;
+const ROLL_LEN = 2, ROLL_SHOWN = 12, rollAt = (k) => 0.1 + k * BEAT / 8;
 
 const emojiOf = (plan, i) => (plan.scenes[i].emoji?.length ? plan.scenes[i].emoji : (KIND[plan.scenes[i].kind] ?? KIND.progress).emoji);
 
@@ -142,13 +151,17 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
   const dayEmoji = plan.emoji?.length ? plan.emoji : ['🔥', '🎉', '✨'];
   const when = plan.label === '今日' ? 'きょう' : 'きのう';
   const marks = [0, ...plan.scenes.map(s => s.start), ...(roll.length ? [ROLL] : []), END];
+  // Every cut gets a different transition; the director's pick opens the first topic.
   const cutKind = marks.map((m, k) => (k === 1 ? plan.transition : m === END ? 'zoom' : CUTS[(k + seed) % CUTS.length]));
+  // Neighbouring scenes never share a motion preset; the day's seed shifts where the cycle starts.
+  const pick = (list, i) => list[(i + seed) % list.length];
   const hue = (i) => pal.hue + (i + 1) * 47;
   const col = (i, l = 62, a = 1) => pal.hsl(hue(i), 95, l, a);
   // -1 hook, 0..N-1 topics, N roll call, N+1 end card.
   const at = (t) => (t < 2 ? -1 : t >= END ? N + 1 : t >= ROLL ? N : plan.scenes.findIndex(s => t < s.end));
   const nameOf = (userId) => stars.find(s => s.userId === userId)?.user ?? posts.find(p => p.userId === userId)?.user ?? '#';
-  K.hits = [{ t: 0, amp: 0.7 }, { t: 2, amp: 0.6 }, ...plan.scenes.slice(1).map(s => ({ t: s.start, amp: 0.45 })),
+  // No flash, shake or smear at t=0: the first frame is the thumbnail and has to be clean.
+  K.hits = [{ t: 2, amp: 0.6 }, ...plan.scenes.slice(1).map(s => ({ t: s.start, amp: 0.45 })),
     ...(cues.freeze ? [{ t: cues.freeze.at, amp: 0.8 }] : []), { t: END, amp: 1 }];
 
   const rr = (x, y, w, h, r) => { K.ctx.beginPath(); K.ctx.roundRect(x, y, w, h, r); };
@@ -305,39 +318,64 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
     }
   }
 
-  function hook(t) {
-    const c = K.ctx;
-    background(t, -1, dayEmoji);
-    K.pill(M, X(210), `${when}の MATTERMOST ⚡`, { size: 32, w: 900, bg: pal.accent, fg: '#000', scaleX: E.outBack(seg(t, 0, 0.2)) });
-    burst(t, 0.28, W / 2, X(470), dayEmoji, 26, 5, 1.1);
-    // Headline slams in, then bounces on the kick.
-    const lay = hookLay(), p = seg(t, 0.04, 0.3);
-    if (p > 0) {
-      const top = X(320), cy = top + lay.lines.length * lay.lineH / 2;
+  // Count-up tiles: the opening on a day when no post stands out enough to tease.
+  function statTiles(t) {
+    const c = K.ctx, st = plan.stats;
+    if (!st) return;
+    const items = [['📝', '投稿', st.posts], ['📺', 'チャンネル', st.channels], ['👥', 'メンバー', st.people], ['🔥', 'リアクション', st.reactions]];
+    const gap = X(18), tw = (W - 2 * M - 3 * gap) / 4, y = X(1000);
+    items.forEach(([icon, label, n], k) => {
+      const a = 0.35 + k * 0.1, e = E.outBack(seg(t, a, a + 0.22), 2.5);
+      if (e <= 0) return;
+      const x = M + k * (tw + gap);
       c.save();
-      c.translate(W / 2, cy); c.rotate(-0.035);
-      const s = lerp(2.6, 1, E.outBack(p, 1.8)) * (1 + 0.03 * kickEnv(t));
-      c.scale(s, s); c.translate(-W / 2, -cy);
-      headingStyles.draw(headingOf(-1), lay, M, top, t, t, -1);
+      c.translate(x + tw / 2, y + X(125)); c.rotate((k - 1.5) * 0.04); c.scale(e, e); c.translate(-(x + tw / 2), -(y + X(125)));
+      rr(x, y, tw, X(250), X(36)); c.fillStyle = k === 1 ? pal.accent : '#fff'; c.fill();
+      emo(icon, x + tw / 2, y - X(10), X(90) * (1 + 0.2 * kickEnv(t)), (k - 1.5) * 0.2);
+      K.text('display', X(74), K.fmt(n * E.outCubic(seg(t, a, a + 0.7))), x + tw / 2, y + X(150), { align: 'center', color: '#000', w: 900, maxW: tw - X(16) });
+      K.text('body', X(26), label, x + tw / 2, y + X(212), { align: 'center', color: '#000', maxW: tw - X(12) });
       c.restore();
-    }
-    const st = plan.stats;
-    if (st) {
-      const items = [['📝', '投稿', st.posts], ['📺', 'チャンネル', st.channels], ['👥', 'メンバー', st.people], ['🔥', 'リアクション', st.reactions]];
-      const gap = X(18), tw = (W - 2 * M - 3 * gap) / 4, y = X(1000);
-      items.forEach(([icon, label, n], k) => {
-        const a = 0.35 + k * 0.1, e = E.outBack(seg(t, a, a + 0.22), 2.5);
-        if (e <= 0) return;
-        const x = M + k * (tw + gap);
-        c.save();
-        c.translate(x + tw / 2, y + X(125)); c.rotate((k - 1.5) * 0.04); c.scale(e, e); c.translate(-(x + tw / 2), -(y + X(125)));
-        rr(x, y, tw, X(250), X(36)); c.fillStyle = k === 1 ? pal.accent : '#fff'; c.fill();
-        emo(icon, x + tw / 2, y - X(10), X(90) * (1 + 0.2 * kickEnv(t)), (k - 1.5) * 0.2);
-        K.text('display', X(74), K.fmt(n * E.outCubic(seg(t, a, a + 0.7))), x + tw / 2, y + X(150), { align: 'center', color: '#000', w: 900, maxW: tw - X(16) });
-        K.text('body', X(26), label, x + tw / 2, y + X(212), { align: 'center', color: '#000', maxW: tw - X(12) });
-        c.restore();
-      });
-    }
+    });
+  }
+
+  // Cold open: the day's most-reacted post with its text blurred, as a question the freeze-frame answers later.
+  function teaser(t) {
+    const c = K.ctx, fz = cues.freeze, p = posts[fz.post];
+    const x = M, y = X(960), w = W - 2 * M, h = X(300), s = 1 + 0.03 * kickEnv(t, 10);
+    K.pill(W / 2, X(846), `🔥 リアクション ×${fz.total} の投稿とは…？`, { align: 'center', size: 40, w: 900, bg: '#ffe100', fg: '#000' });
+    c.save();
+    c.translate(W / 2, y + h / 2); c.rotate(0.02); c.scale(s, s); c.translate(-W / 2, -(y + h / 2));
+    c.save();
+    c.shadowColor = 'rgba(0,0,0,.5)'; c.shadowBlur = X(34); c.shadowOffsetY = X(14);
+    rr(x, y, w, h, X(30)); c.fillStyle = '#fff'; c.fill();
+    c.restore();
+    rr(x, y, w, h, X(30)); c.strokeStyle = '#ffe100'; c.lineWidth = X(10); c.stroke();
+    const r = X(48);
+    face(p.userId, p.user, x + X(44) + r, y + X(36) + r, r, pal.accent);
+    K.text('body', X(38), `@${p.user}`, x + X(170), y + X(98), { color: '#111', w: 900, maxW: w - X(380) });
+    const lay = K.fit(`tease${fz.post}`, p.text, 'body', w - X(290), 2, X(48), X(30), { w: 700, lh: 1.3 });
+    K.font('body', lay.size, lay.opts);
+    c.save();
+    c.filter = `blur(${Math.round(X(13))}px)`; c.textBaseline = 'top'; c.fillStyle = '#111';
+    lay.glyphs.forEach((g) => c.fillText(g.s, x + X(60) + g.x, y + X(156) + g.li * lay.lineH));
+    c.restore();
+    emo('❓', x + w - X(110), y + h / 2, X(190) * (1 + 0.15 * kickEnv(t)), 0.2 * Math.sin(t * 7));
+    c.restore();
+  }
+
+  function hook(t) {
+    const c = K.ctx, st = plan.stats;
+    background(t, -1, dayEmoji);
+    // Frame 0 is the thumbnail: title and teaser are complete from the start and only pulse.
+    K.pill(M, X(210), `${when}の MATTERMOST ⚡`, { size: 32, w: 900, bg: pal.accent, fg: '#000' });
+    burst(t, 0.1, W / 2, X(470), dayEmoji, 26, 5, 1.1);
+    const lay = hookLay(), top = X(320), cy = top + lay.lines.length * lay.lineH / 2, s = 1 + 0.03 * kickEnv(t);
+    c.save();
+    c.translate(W / 2, cy); c.rotate(-0.035); c.scale(s, s); c.translate(-W / 2, -cy);
+    // The day's heading style, with its entrance already over: only its lasting effect plays.
+    headingStyles.draw(headingOf(-1), lay, M, top, t + 3, t, -1);
+    c.restore();
+    if (cues.freeze) teaser(t); else statTiles(t);
     stars.slice(0, 7).forEach((s, k, arr) => {
       const e = E.outBack(seg(t, 0.55 + k * 0.06, 0.85 + k * 0.06), 2);
       if (e <= 0) return;
@@ -346,7 +384,8 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
       const y = lerp(H + X(140), X(1450) + Math.abs(k - mid) * X(26), e) - kickEnv(t, 10) * X(20) * (k % 2 ? 1 : 0.5);
       face(s.userId, s.user, x, y, X(58), col(k));
     });
-    if (t > 1) K.text('body', X(38), `${when}の話題を、一気見 ${dayEmoji[0]}`, W / 2, X(1640), { align: 'center' });
+    const line = cues.freeze && st ? `${st.posts}投稿・${st.channels}チャンネルを、一気見 ${dayEmoji[0]}` : `${when}の話題を、一気見 ${dayEmoji[0]}`;
+    if (t > 0.5) K.text('body', X(38), line, W / 2, X(1640), { align: 'center' });
   }
 
   function outro(t) {
@@ -366,7 +405,6 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
     });
     const lay = K.fit('outro', 'つづきは Mattermost で！', 'display', W - 2 * M, 2, X(104), X(56), { lh: 1.2 });
     popText(lay, M, X(1180), tau, { start: 0.4, step: 0.04, align: 'center' });
-    if (tau > 0.8) K.text('body', X(34), '元の投稿へのリンクは本文にあります 👇', W / 2, X(1520), { align: 'center', color: pal.accent });
   }
 
   function postCard(p, card, x, y, w, h, t, i, fresh) {
@@ -416,9 +454,36 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
     });
   }
 
+  // Replies of the threads shown in scene i, queued through one lane so they never overlap each other;
+  // one that could not get on screen before the scene ends is dropped.
+  const LANE = X(96), FLY = X(640), lanes = new Map();
+  function chatter(i) {
+    if (lanes.has(i)) return lanes.get(i);
+    const said = [], end = plan.scenes[i].end;
+    let free = 0;
+    K.font('body', X(44), { w: 900 });
+    cues.scenes[i].cards.forEach((card) => (posts[card.id].chatter ?? []).forEach((text) => {
+      const at = Math.max(card.at + 0.4, free), w = K.ctx.measureText(text).width;
+      if (at > end - 1 || said.some((x) => x.text === text)) return;
+      said.push({ text, at, w });
+      free = at + (w + X(70)) / FLY;
+    }));
+    lanes.set(i, said);
+    return said;
+  }
+
   function scene(i, t) {
     const c = K.ctx, s = plan.scenes[i], cue = cues.scenes[i], tau = t - s.start, list = emojiOf(plan, i);
     background(t, i, list);
+    const lay = headLay(i), k0 = s.heading.indexOf(s.keyword);
+    const top = X(385), areaTop = top + lay.lines.length * lay.lineH + X(44);
+    const n = cue.cards.length, latest = cue.cards.reduce((mx, card, j) => (t >= card.at ? j : mx), -1);
+    const said = chatter(i);
+    // The camera drifts closer through the scene and punches in when a post lands (gently when many do).
+    const cam = 1 + 0.02 * seg(tau, 0, s.end - s.start) + (latest < 0 ? 0 : 0.1 / (1 + n) * Math.exp(-(t - cue.cards[latest].at) * 5));
+    const camY = (areaTop + X(1820)) / 2;
+    c.save();
+    c.translate(W / 2, camY); c.scale(cam, cam); c.translate(-W / 2, -camY);
     const kind = KIND[s.kind] ?? KIND.progress;
     const cw = K.pill(M, X(175), `${String(i + 1).padStart(2, '0')}/${String(N).padStart(2, '0')}`, { size: 30, w: 900, bg: '#fff', fg: '#000', scaleX: E.outBack(seg(tau, 0, 0.2)) });
     // Kind badge is stamped on (scale 3 → 1 with a tilt).
@@ -441,23 +506,19 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
       c.restore();
     }
     // Heading: word pops with the keyword highlighted, pulsing on the kick.
-    const lay = headLay(i), k0 = s.heading.indexOf(s.keyword);
-    const top = X(385), cy = top + lay.lines.length * lay.lineH / 2, pulse = 1 + 0.03 * kickEnv(t);
+    const cy = top + lay.lines.length * lay.lineH / 2, pulse = 1 + 0.03 * kickEnv(t);
     c.save();
     c.translate(W / 2, cy); c.scale(pulse, pulse); c.translate(-W / 2, -cy);
     headingStyles.draw(headingOf(i), lay, M, top, tau, t, i, { hl: k0 >= 0 ? [k0, k0 + s.keyword.length] : null });
     c.restore();
-    // Giant topic emoji smashes in, then parks top-right and bounces on the beat.
-    const e1 = E.outBack(seg(tau, 0, 0.2), 2.4), m = E.inOutCubic(seg(tau, 0.3, 0.5));
-    if (e1 > 0) {
-      emo(list[0], lerp(W / 2, W - X(118), m), lerp(H * 0.48, X(210), m) - kickEnv(t, 10) * X(18) * m,
-        lerp(X(620), X(150), m) * e1 * (1 + 0.12 * kickEnv(t) * m), lerp(-0.5 * (1 - e1), 0.14 * Math.sin(t * 5), m));
-    }
-    // Original posts, in this scene's presentation style, filling the space under the heading.
-    const areaTop = top + lay.lines.length * lay.lineH + X(44);
-    const latest = cue.cards.reduce((mx, card, j) => (t >= card.at ? j : mx), -1);
+    // Giant topic emoji smashes, spins or drops in, then parks top-right and bounces on the beat.
+    const hero = pick(HERO_IN, i)(tau), m = E.inOutCubic(seg(tau, 0.3, 0.5));
+    emo(list[0], lerp(W / 2, W - X(118), m), lerp(H * (0.48 + (hero.dy ?? 0)), X(210), m) - kickEnv(t, 10) * X(18) * m,
+      lerp(X(620), X(150), m) * (hero.scale ?? 1) * (1 + 0.12 * kickEnv(t) * m), lerp(hero.rot ?? 0, 0.14 * Math.sin(t * 5), m));
+    // Original posts, in this scene's presentation style, filling the space under the heading
+    // (minus one lane at the bottom when the scene has replies to fly past).
     const spots = postStyles.STYLES[styleOf(i)]({
-      t, i, list, latest, start: s.start, end: s.end, A: { x: M, y: areaTop, w: W - 2 * M, h: X(1820) - areaTop },
+      t, i, list, latest, start: s.start, end: s.end, A: { x: M, y: areaTop, w: W - 2 * M, h: X(1820) - areaTop - (said.length ? LANE : 0) },
       items: cue.cards.map((card, j) => ({ card, p: posts[card.id], j })),
     });
     // Emoji on every slam, and reactions streaming up like a live stream.
@@ -471,10 +532,24 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
       const since = t - st.at;
       if (since < 0) return;
       const r = (j) => hashN(seed + i * 31 + st.k * 7 + j);
-      const x = r(1) < 0.5 ? X(80) + r(2) * X(70) : W - X(80) - r(2) * X(70);
-      emo(list[(st.k + 1) % list.length], x, X(740) + r(3) * X(1000), X(150) * E.outBack(seg(since, 0, 0.2), 3) * (1 + 0.14 * kickEnv(t)),
-        (r(5) - 0.5) * 0.7 + Math.sin(t * 6 + st.k) * 0.14);
+      const side = r(1) < 0.5 ? -1 : 1, x = side < 0 ? X(80) + r(2) * X(70) : W - X(80) - r(2) * X(70);
+      // The three stickers of a scene each arrive differently: pop, roll in from the edge, drop.
+      const pose = pick(STICKER_IN, i + st.k)(since, side);
+      emo(list[(st.k + 1) % list.length], x + (pose.dx ?? 0) * W, X(740) + r(3) * X(1000) + (pose.dy ?? 0) * H,
+        X(150) * (pose.scale ?? 1) * (1 + 0.14 * kickEnv(t)), (r(5) - 0.5) * 0.7 + Math.sin(t * 6 + st.k) * 0.14 + (pose.rot ?? 0));
     });
+    // Real replies from the thread fly past like live comments, in their own lane under the posts.
+    if (said.length) {
+      K.font('body', X(44), { w: 900 });
+      c.textAlign = 'left'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+      said.forEach(({ text, at, w }) => {
+        const x = W + X(20) - (t - at) * FLY;
+        if (t < at || x < -w) return;
+        c.strokeStyle = '#000'; c.lineWidth = X(10); c.strokeText(text, x, X(1820) - LANE / 2 + X(8));
+        c.fillStyle = '#fff'; c.fillText(text, x, X(1820) - LANE / 2 + X(8));
+      });
+    }
+    c.restore();
   }
 
   function rollFrame(t) {
@@ -557,7 +632,7 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
     c.translate(-W / 2 + (hashN(jolt) - 0.5) * X(30) * hit, -H / 2 + (hashN(jolt + 7) - 0.5) * X(30) * hit);
     const cut = marks.find(m => m > 0 && t >= m - CUT_LEN / 2 && t < m + CUT_LEN / 2);
     if (cut !== undefined && !fz) {
-      TRANSITION[cutKind[marks.indexOf(cut)]].draw(K, (t - cut + CUT_LEN / 2) / CUT_LEN,
+      CUT_DRAW[cutKind[marks.indexOf(cut)]].draw(K, (t - cut + CUT_LEN / 2) / CUT_LEN,
         () => frame(at(cut - 0.001), t), () => frame(at(cut), t), { center: [W / 2, H * 0.45] });
     } else frame(index, fz ? fz.at : t);
     if (fz) freezeStamp(t - fz.at, fz);
@@ -565,7 +640,7 @@ function makeRenderer(plan, speech, faces, cues, duration, roll, options = {}) {
     if (cues.freeze) confetti(t, cues.freeze.at, 80, 2);
     confetti(t, END + 0.05, 120, 3);
     // PlaceReel's focus lines, beat sparks, streaks, glitch, HUD and cut smears.
-    overdrive(K, t, marks);
+    overdrive(K, t, marks.slice(1));
     c.restore();
     if (hit > 0.45) K.fill(`rgba(255,255,255,${Math.min(0.55, (hit - 0.45) * 0.8)})`);
     chrome(t);
@@ -584,7 +659,7 @@ function soundEvents(plan, speech, cues, headingPops, duration, roll) {
   const END = duration - 2, ROLL = END - ROLL_LEN;
   const pops = [...headingPops], ticks = [], stickers = [], swaps = [];
   speech.forEach(s => { for (let t = s.start; t < s.start + s.dur; t += BEAT / 2) pops.push(t); });
-  for (let t = 0.35; t < 1.2; t += BEAT / 4) ticks.push(t);                    // hook counters
+  if (!cues.freeze) for (let t = 0.35; t < 1.2; t += BEAT / 4) ticks.push(t); // hook counters
   (plan.stars ?? []).slice(0, 7).forEach((_, k) => pops.push(0.55 + k * 0.06)); // avatars fly in
   (plan.stars ?? []).slice(0, 8).forEach((_, k) => pops.push(END + 0.08 + k * 0.05));
   cues.scenes.forEach(sc => {
@@ -619,11 +694,12 @@ function wav(buffer) {
   return out;
 }
 
-// `options.styles` / `options.headings` pin the post / heading style of each scene (for previews); normally they are shuffled per day.
+// `options.styles` / `options.headings` pin the post / heading style of each scene (for previews); normally they are
+// shuffled per day. `options.hook` is the audio of the headline read over the opening.
 window.prepareVideo = async (plan, audio, avatars = {}, options = {}) => {
   await document.fonts.ready;
   const roll = rollCall(plan);
-  const { speech, tooLong, duration } = await prepareAudio(plan, audio, roll.length ? ROLL_LEN : 0);
+  const { speech, tooLong, duration } = await prepareAudio(plan, audio, roll.length ? ROLL_LEN : 0, options.hook);
   if (tooLong.length) return { tooLong };
   // PlaceReel's clock accepts listed lengths only; any even length up to 60 s works with its grid.
   if (!LENGTHS.includes(duration)) LENGTHS.push(duration);
