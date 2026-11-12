@@ -7,7 +7,7 @@ import { addCalendarDays, jstDate } from "../src/domain/date";
 import { registerVideoRoutes, ensureVideoTable } from "../src/routes/video";
 import { demoPlan } from "../video/sample";
 import { collectVideoSource } from "../video/source";
-import { directSummary } from "../video/gemini";
+import { directSummary, synthesize } from "../video/gemini";
 
 const state = vi.hoisted(() => ({ client: null as unknown as Client }));
 vi.mock("@libsql/client/web", () => ({ createClient: () => state.client }));
@@ -88,6 +88,13 @@ describe("video admin API", () => {
     await seed();
     await state.client.execute("UPDATE summary_videos SET status = 'publishing'");
     expect((await request("publish", { method: "PUT", headers: { "Content-Type": "video/mp4" }, body: mp4 })).status).toBe(409);
+  });
+  it("reads the headline for the opening line", async () => {
+    await seed();
+    vi.mocked(synthesize).mockResolvedValue("hook-wav");
+    expect(await (await request("audio/hook", { method: "POST" })).json()).toEqual({ audio: "hook-wav", narration: "動いた！直った！盛り上がった！" });
+    expect(vi.mocked(synthesize).mock.calls[0].slice(1)).toEqual(["動いた！直った！盛り上がった！", demoPlan(date).hook]);
+    expect((await request("audio/nope", { method: "POST" })).status).toBe(404);
   });
   it("serves avatars only for people in the storyboard", async () => {
     await seed();

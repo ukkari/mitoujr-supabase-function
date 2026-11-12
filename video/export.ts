@@ -11,7 +11,7 @@ import type { VideoPlan } from "./types";
 
 type TooLong = { index: number; natural: number; window: number };
 declare const window: {
-    prepareVideo(plan: VideoPlan, audio: string[], avatars: Record<string, string>): Promise<{ tooLong: TooLong[]; duration?: number }>;
+    prepareVideo(plan: VideoPlan, audio: string[], avatars: Record<string, string>, hook?: string): Promise<{ tooLong: TooLong[]; duration?: number }>;
     renderFrame(time: number): string;
 };
 
@@ -61,8 +61,8 @@ export async function createVideoRenderer(directory: string) {
   } catch (error) { await browser.close(); server.close(); throw error; }
 
   return {
-    async prepare(plan: VideoPlan, audio: string[], avatars: Record<string, string> = {}) {
-      return await page.evaluate(({ plan, audio, avatars }) => window.prepareVideo(plan, audio, avatars), { plan, audio, avatars });
+    async prepare(plan: VideoPlan, audio: string[], avatars: Record<string, string> = {}, hook?: string) {
+      return await page.evaluate(({ plan, audio, avatars, hook }) => window.prepareVideo(plan, audio, avatars, hook), { plan, audio, avatars, hook });
     },
     async export(output: string, duration: number) {
       if (!Number.isInteger(duration) || duration < 8 || duration > 60) throw new Error("Invalid video length");

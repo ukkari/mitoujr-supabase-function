@@ -81,9 +81,12 @@ async function main() {
       plan.scenes[index].narration = result.narration;
       console.log(`Narration ${index + 1}/${plan.scenes.length} prepared`);
     }
+    const hook: string = values.demo ? demoAudio(2.6) :
+      (await api("/audio/hook", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).audio;
+    console.log("Opening line prepared");
     let duration = 0;
     for (let attempt = 0; ; attempt += 1) {
-      const prepared = await renderer.prepare(plan, audio, faces);
+      const prepared = await renderer.prepare(plan, audio, faces, hook);
       const tooLong = prepared.tooLong;
       if (!tooLong.length) { duration = prepared.duration!; break; }
       if (attempt >= 2 || values.demo) throw new Error("Narration could not fit without cutting speech");
