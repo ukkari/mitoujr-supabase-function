@@ -3,6 +3,8 @@ import { MAX_SCENES, cleanText, directSummary, emojiOf, pickQuote, shuffled, syn
 import { validVideoDate, videoMessage } from "../src/routes/video";
 import { demoDirection, demoSource } from "../video/sample";
 import { sceneToDrop } from "../video/fit";
+// @ts-expect-error The renderer's browser modules are plain JavaScript without types.
+import { createPostStyles } from "../video/post-styles.js";
 import { MattermostClient } from "../src/mattermost";
 import type { Env } from "../src/env";
 
@@ -163,6 +165,17 @@ describe("Japanese video direction", () => {
     // One scene per channel: the channel with the fewest posts gives way.
     const single = { ...plan, scenes: [plan.scenes[0], plan.scenes[3], plan.scenes[1]] };
     expect(sceneToDrop(single, [clip(0)])).toBe(1);
+  });
+  it("draws nothing for a scene without cards instead of breaking the frame", () => {
+    const { STYLES } = createPostStyles({ K: {}, X: (v: number) => v, W: 1080, H: 1920, plan: { scenes: [{ source: 0 }], sources: [] }, posts: [], seed: 20261112 });
+    const scene = { t: 5.4, i: 1, list: ["🚀"], latest: -1, start: 5, end: 8, A: { x: 64, y: 600, w: 952, h: 1200 }, items: [] as unknown[] };
+    // A channel whose posts are only links or attachments still gets a scene, with no cards.
+    // bento and marquee read the first card regardless (the 2026-11-12 video died on its second scene).
+    for (const id of ["bento", "marquee", ...Object.keys(STYLES)]) expect(STYLES[id](scene), id).toEqual([]);
+    // A card whose post is missing is left out, too.
+    const card = { id: 3, at: 5.35, chips: [] };
+    for (const id of Object.keys(STYLES)) expect(STYLES[id]({ ...scene, items: [{ card, p: undefined, j: 0 }] }), id).toEqual([]);
+    for (const id of Object.keys(STYLES)) expect(STYLES[id]({ ...scene, items: [, { card, p: undefined, j: 1 }] }), id).toEqual([]);
   });
   it("uses Gemini for directing and current TTS metadata without exposing errors", async () => {
     const mock = vi.fn()

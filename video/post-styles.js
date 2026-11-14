@@ -958,6 +958,17 @@ export function createPostStyles({ K, X, W, H, plan, posts, seed, col, rr, face,
     },
   };
 
+  // The looks above assume at least one card, each with its post. A scene can have none (a channel
+  // whose posts are only links or attachments), so that case is settled here for all of them: a card
+  // without a post is left out, and a scene with nothing left draws no posts instead of throwing.
+  for (const [id, draw] of Object.entries(STYLES)) {
+    STYLES[id] = (S) => {
+      const items = S.items.filter((it) => it?.card && it.p);
+      if (!items.length) return [];
+      return draw(items.length === S.items.length ? S : { ...S, items: items.map((it, j) => ({ ...it, j })) });
+    };
+  }
+
   // Every topic gets a different look; the order is reshuffled each day.
   function order() {
     const ids = Object.keys(STYLES);
