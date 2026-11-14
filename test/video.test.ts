@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_SCENES, cleanText, directSummary, emojiOf, pickQuote, shuffled, synthesize, validatePlan } from "../video/gemini";
 import { validVideoDate, videoMessage } from "../src/routes/video";
 import { demoDirection, demoSource } from "../video/sample";
+import { sceneToDrop } from "../video/fit";
 import { MattermostClient } from "../src/mattermost";
 import type { Env } from "../src/env";
 
@@ -140,6 +141,28 @@ describe("Japanese video direction", () => {
     // If the top-up fails, the video is still made; the roll call names the channel.
     const fallback = await directSummary({ GEMINI_API_KEY: "k" }, source);
     expect(fallback.scenes).toHaveLength(partial.scenes.length);
+  });
+  it("keeps the storyboard when the top-up returns an unusable scene", async () => {
+    const full = demoDirection(), partial = { ...full, scenes: full.scenes.filter((scene) => scene.source !== 2) };
+    const reply = (body: unknown) => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(body) }] } }] });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(reply(partial))
+      .mockResolvedValueOnce(reply({ scenes: [{ ...full.scenes[3], narration: "English only narration." }] })));
+    const plan = await directSummary({ GEMINI_API_KEY: "k" }, source);
+    expect(plan.scenes).toHaveLength(partial.scenes.length);
+    expect(plan.scenes.some((scene) => scene.source === 2)).toBe(false);
+  });
+  it("moves the quietest scene to the roll call when narration cannot fit", () => {
+    const plan = validatePlan(demoDirection(), source);
+    const clip = (index: number, alone?: boolean) => ({ index, natural: 9, window: 6.7, alone });
+    // Channels 0 and 1 have five posts and channel 2 four, but only a repeated channel loses nothing.
+    expect(plan.scenes.map((scene) => scene.source)).toEqual([0, 1, 1, 2, 0, 2, 0]);
+    expect(sceneToDrop(plan, [clip(0)])).toBe(6);
+    // A clip that cannot fit a scene even at full speed goes first.
+    expect(sceneToDrop(plan, [clip(0), clip(3, true)])).toBe(3);
+    // One scene per channel: the channel with the fewest posts gives way.
+    const single = { ...plan, scenes: [plan.scenes[0], plan.scenes[3], plan.scenes[1]] };
+    expect(sceneToDrop(single, [clip(0)])).toBe(1);
   });
   it("uses Gemini for directing and current TTS metadata without exposing errors", async () => {
     const mock = vi.fn()

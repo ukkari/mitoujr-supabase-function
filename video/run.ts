@@ -7,6 +7,7 @@ import { createVideoRenderer, snapshotTimes } from "./export";
 import { demoPlan, demoAudio } from "./sample";
 import { customEmojiName } from "./emoji";
 import { createVideoApi } from "./api";
+import { sceneToDrop } from "./fit";
 import type { VideoPlan } from "./types";
 
 const { values } = parseArgs({ options: {
@@ -76,19 +77,37 @@ async function main() {
     const hook: string = values.demo ? demoAudio(2.6) :
       (await api("/audio/hook", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).audio;
     console.log("Opening line prepared");
+    // Position in the (possibly trimmed) local plan → scene index in the Worker's stored storyboard.
+    const stored = plan.scenes.map((_, index) => index);
     let duration = 0;
     for (let attempt = 0; ; attempt += 1) {
       const prepared = await renderer.prepare(plan, audio, faces, hook);
       const tooLong = prepared.tooLong;
       if (!tooLong.length) { duration = prepared.duration!; break; }
-      if (attempt >= 2 || values.demo) throw new Error("Narration could not fit without cutting speech");
-      for (const clip of tooLong) {
-        const text = plan.scenes[clip.index].narration;
-        const maxChars = Math.max(8, Math.min([...text].length - 1, Math.floor([...text].length * clip.window / clip.natural * .9)));
-        const result = await api(`/audio/${clip.index}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ maxChars }) });
-        audio[clip.index] = result.audio;
-        plan.scenes[clip.index].narration = result.narration;
+      if (values.demo) throw new Error("Narration could not fit without cutting speech");
+      if (attempt < 2) {
+        try {
+          for (const clip of tooLong) {
+            const text = plan.scenes[clip.index].narration;
+            const maxChars = Math.max(8, Math.min([...text].length - 1, Math.floor([...text].length * clip.window / clip.natural * .9)));
+            const result = await api(`/audio/${stored[clip.index]}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ maxChars }) });
+            audio[clip.index] = result.audio;
+            plan.scenes[clip.index].narration = result.narration;
+          }
+          console.log(`Narration shortened for ${tooLong.length} scene(s)`);
+          continue;
+        } catch (error) {
+          // A narration that cannot be shortened costs its scene below, not the whole video.
+          console.warn(error instanceof Error ? error.message : "Narration could not be shortened");
+          attempt = 2;
+        }
       }
+      // Shorter text did not make it fit: the quietest scene moves to the roll call, and the rest
+      // keep their full narration. Nothing is cut mid-sentence.
+      if (plan.scenes.length <= 1) throw new Error("Narration could not fit without cutting speech");
+      const drop = sceneToDrop(plan, tooLong);
+      plan.scenes.splice(drop, 1); audio.splice(drop, 1); stored.splice(drop, 1);
+      console.log(`Narration does not fit: one scene moved to the roll call, ${plan.scenes.length} remain`);
     }
     const rendered = join(directory, "summary.mp4");
     await renderer.export(rendered, duration);

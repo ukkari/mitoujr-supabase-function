@@ -47,8 +47,8 @@ const KINDS = ["progress", "question", "share", "fun", "news"];
 const MUSIC = ["futurebass", "phonk", "trap", "house", "citypop"];
 const TRANSITIONS = ["whip", "zoom", "flash", "swipe", "band", "pixel"];
 const QUOTE_MAX = 42, CHATTER_MAX = 16, CHATTER_PER_POST = 4;
-// Scenes are at least three seconds and the body is 56 s, so this many always fit; a channel only
-// moves to the roll call when the video is really full.
+// Sixteen scenes fit the 56 s body only when most take the three-second minimum. When the day's
+// narration needs more, the runner moves the quietest scenes to the roll call (video/fit.ts).
 export const MAX_SCENES = 16;
 // Posts shown per scene: the renderer sizes each box to its text and grows the type to fill the screen.
 export const MAX_SCENE_POSTS = 6;
@@ -147,6 +147,14 @@ export function pickQuote(message: string, quote: unknown, max = QUOTE_MAX): str
   return clip(clean, max);
 }
 
+// Narration longer than the target is allowed: the renderer asks for a shorter read if it cannot fit.
+function usableScene(scene: any, source: VideoSource): boolean {
+  return Number.isInteger(scene?.source) && !!source.channels[scene.source] &&
+    boundedText(scene.heading, 60) && boundedText(scene.keyword, 30) &&
+    boundedText(scene.narration, NARRATION_LIMIT) &&
+    /[\u3040-\u30ff\u3400-\u9fff]/u.test(scene.narration);
+}
+
 // Model output is repaired where that is safe (trim, defaults); only unusable text is rejected.
 export function validatePlan(raw: any, source: VideoSource): VideoPlan {
   if (!boundedText(raw?.headline, 60) || !boundedText(raw?.title, 80) ||
@@ -165,13 +173,7 @@ export function validatePlan(raw: any, source: VideoSource): VideoPlan {
   const scenes = raw.scenes.map((scene: any, index: number) => {
     // Provisional two-bar slots; the renderer re-times scenes from the sped-up voice.
     const start = 2 + 4 * index, end = start + 4;
-    // Narration longer than the target is allowed: the renderer asks for a shorter read if it cannot fit.
-    if (!Number.isInteger(scene.source) || !source.channels[scene.source] ||
-      !boundedText(scene.heading, 60) || !boundedText(scene.keyword, 30) ||
-      !boundedText(scene.narration, NARRATION_LIMIT) ||
-      !/[\u3040-\u30ff\u3400-\u9fff]/u.test(scene.narration)) {
-      throw new Error("Invalid video scene or narration exceeds its reading budget");
-    }
+    if (!usableScene(scene, source)) throw new Error("Invalid video scene or narration exceeds its reading budget");
     scene = { ...scene, kind: KINDS.includes(scene.kind) ? scene.kind : "progress",
       heading: clip(scene.heading, 24), keyword: [...scene.keyword].slice(0, 10).join("") };
     // Posts with nothing left to show once links are removed never become cards.
@@ -273,7 +275,8 @@ ${SCENE_RULES}`, { ...input, channels: input.channels.filter((channel) => wanted
     { type: "OBJECT", properties: { scenes: schema.properties.scenes }, required: ["scenes"] });
     const added = new Set<number>();
     extra = (Array.isArray(more?.scenes) ? more.scenes : [])
-      .filter((scene: any) => wanted.includes(scene?.source) && !added.has(scene.source) && added.add(scene.source));
+      // An unusable extra scene is left out; it must not invalidate the storyboard it was added to.
+      .filter((scene: any) => wanted.includes(scene?.source) && usableScene(scene, source) && !added.has(scene.source) && added.add(scene.source));
   } catch { /* the roll call still names these channels */ }
   raw.scenes = [...firsts, ...extra, ...repeats];
 }

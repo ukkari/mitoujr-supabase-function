@@ -65,7 +65,7 @@ async function prepareAudio(plan, audio, rollLen, hookAudio) {
   // `window` is in unstretched seconds so the runner can shorten the text proportionally.
   const tooLong = [];
   bars.forEach((b, index) => {
-    if (b > MAX_SCENE) tooLong.push({ index, natural: clips[index].natural, window: (MAX_SCENE + PRE + POST) * MAX_SPEED });
+    if (b > MAX_SCENE) tooLong.push({ index, natural: clips[index].natural, window: (MAX_SCENE + PRE + POST) * MAX_SPEED, alone: true });
   });
   if (!tooLong.length && total(bars) > body) {
     const longest = bars.map((b, index) => ({ b, index })).filter(x => x.b > MIN_SCENE).sort((a, b) => b.b - a.b);

@@ -8,8 +8,8 @@ import { chromium } from "playwright";
 import ffmpeg from "@ffmpeg-installer/ffmpeg";
 import ffprobe from "@ffprobe-installer/ffprobe";
 import type { VideoPlan } from "./types";
+import type { TooLong } from "./fit";
 
-type TooLong = { index: number; natural: number; window: number };
 declare const window: {
     prepareVideo(plan: VideoPlan, audio: string[], avatars: Record<string, string>, options: { hook?: string }): Promise<{ tooLong: TooLong[]; duration?: number }>;
     renderFrame(time: number): string;
